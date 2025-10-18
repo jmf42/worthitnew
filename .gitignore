@@ -1,0 +1,11 @@
+.DS_Store
+DerivedData/
+build/
+xcuserdata/
+*.xcuserstate
+*.xcresult
+*.xccheckout
+*.xcscmblueprint
+.build/
+*.log
+youtube-transcript-service/

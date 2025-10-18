@@ -1,0 +1,14 @@
+included:
+  - .
+excluded:
+  - Pods
+  - Carthage
+
+only_rules:
+  - trailing_whitespace
+  - vertical_whitespace
+  - trailing_newline
+  - duplicate_imports
+  - comment_spacing
+  - unused_optional_binding
+  - unused_import
