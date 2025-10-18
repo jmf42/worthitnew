@@ -6,6 +6,15 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		3F464B7B2DEBAB45003C59A5 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 3F464B7A2DEBAB45003C59A5 /* LaunchScreen.storyboard */; };
+		3F464B7C2DEBAB45003C59A5 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 3F464B7A2DEBAB45003C59A5 /* LaunchScreen.storyboard */; };
+		3F4A5ADD2E85E57F006AA34E /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3F4A5ADC2E85E57E006AA34E /* StoreKit.framework */; };
+		3F58507B2E5517E500342E8D /* Share.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3F1624032DE2395E0020E9C5 /* Share.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		3F9FD6252E85DEA2006A7EA7 /* tuliai.worthit.premium.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 3F9FD6242E85DEA2006A7EA7 /* tuliai.worthit.premium.storekit */; };
+		3F9FD6262E85DEA2006A7EA7 /* tuliai.worthit.premium.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 3F9FD6242E85DEA2006A7EA7 /* tuliai.worthit.premium.storekit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		3F1623BF2DE234F00020E9C5 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,28 +30,103 @@
 			remoteGlobalIDString = 3F1623B02DE234EE0020E9C5;
 			remoteInfo = WorthIt;
 		};
+		3F16240B2DE2395E0020E9C5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3F1623A92DE234EE0020E9C5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3F1624022DE2395E0020E9C5;
+			remoteInfo = Share;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3F1624122DE2395E0020E9C5 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 8;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				3F58507B2E5517E500342E8D /* Share.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		3F1623B12DE234EE0020E9C5 /* WorthIt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WorthIt.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3F1623BE2DE234F00020E9C5 /* WorthItTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WorthItTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3F1623C82DE234F10020E9C5 /* WorthItUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WorthItUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3F1624032DE2395E0020E9C5 /* Share.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = Share.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		3F464B7A2DEBAB45003C59A5 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		3F4A5ADC2E85E57E006AA34E /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
+		3F9FD6242E85DEA2006A7EA7 /* tuliai.worthit.premium.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = tuliai.worthit.premium.storekit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3F16241A2DE23EB80020E9C5 /* Exceptions for "WorthIt" folder in "Share" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Assets.xcassets,
+				MainViewModel.swift,
+				Models.swift,
+				Services/APIManager.swift,
+				Services/CacheManager.swift,
+				Services/SubscriptionManager.swift,
+				Services/UsageTracker.swift,
+				Utils/AnalyticsService.swift,
+				Utils/Logger.swift,
+				Utils/Theme.swift,
+				Utils/URLParser.swift,
+				Views/AskAnythingScreen.swift,
+				Views/CommonUI.swift,
+				Views/EssentialsScreen.swift,
+				Views/InitialScreen.swift,
+				Views/PaywallCard.swift,
+				Views/ProcessingView.swift,
+				Views/RootView.swift,
+				Views/SentimentSpectrumView.swift,
+				Views/ShareOverlay.swift,
+			);
+			target = 3F1624022DE2395E0020E9C5 /* Share */;
+		};
+		3F16242D2DE2469D0020E9C5 /* Exceptions for "Share" folder in "Share" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3F1624022DE2395E0020E9C5 /* Share */;
+		};
+		3F16242F2DE27C8E0020E9C5 /* Exceptions for "WorthIt" folder in "WorthIt" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				info.plist,
+			);
+			target = 3F1623B02DE234EE0020E9C5 /* WorthIt */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3F1623B32DE234EE0020E9C5 /* WorthIt */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3F16242F2DE27C8E0020E9C5 /* Exceptions for "WorthIt" folder in "WorthIt" target */,
+				3F16241A2DE23EB80020E9C5 /* Exceptions for "WorthIt" folder in "Share" target */,
+			);
 			path = WorthIt;
-			sourceTree = "<group>";
-		};
-		3F1623C12DE234F00020E9C5 /* WorthItTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = WorthItTests;
 			sourceTree = "<group>";
 		};
 		3F1623CB2DE234F10020E9C5 /* WorthItUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = WorthItUITests;
+			sourceTree = "<group>";
+		};
+		3F1624042DE2395E0020E9C5 /* Share */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3F16242D2DE2469D0020E9C5 /* Exceptions for "Share" folder in "Share" target */,
+			);
+			path = Share;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -52,6 +136,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3F4A5ADD2E85E57F006AA34E /* StoreKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -69,15 +154,25 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3F1624002DE2395E0020E9C5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		3F1623A82DE234EE0020E9C5 = {
 			isa = PBXGroup;
 			children = (
+				3F9FD6242E85DEA2006A7EA7 /* tuliai.worthit.premium.storekit */,
+				3F464B7A2DEBAB45003C59A5 /* LaunchScreen.storyboard */,
 				3F1623B32DE234EE0020E9C5 /* WorthIt */,
-				3F1623C12DE234F00020E9C5 /* WorthItTests */,
 				3F1623CB2DE234F10020E9C5 /* WorthItUITests */,
+				3F1624042DE2395E0020E9C5 /* Share */,
+				3F4A5ADB2E85E57E006AA34E /* Frameworks */,
 				3F1623B22DE234EE0020E9C5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,8 +183,17 @@
 				3F1623B12DE234EE0020E9C5 /* WorthIt.app */,
 				3F1623BE2DE234F00020E9C5 /* WorthItTests.xctest */,
 				3F1623C82DE234F10020E9C5 /* WorthItUITests.xctest */,
+				3F1624032DE2395E0020E9C5 /* Share.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		3F4A5ADB2E85E57E006AA34E /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3F4A5ADC2E85E57E006AA34E /* StoreKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -102,10 +206,12 @@
 				3F1623AD2DE234EE0020E9C5 /* Sources */,
 				3F1623AE2DE234EE0020E9C5 /* Frameworks */,
 				3F1623AF2DE234EE0020E9C5 /* Resources */,
+				3F1624122DE2395E0020E9C5 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3F16240C2DE2395E0020E9C5 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3F1623B32DE234EE0020E9C5 /* WorthIt */,
@@ -129,9 +235,6 @@
 			);
 			dependencies = (
 				3F1623C02DE234F00020E9C5 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				3F1623C12DE234F00020E9C5 /* WorthItTests */,
 			);
 			name = WorthItTests;
 			packageProductDependencies = (
@@ -163,6 +266,28 @@
 			productReference = 3F1623C82DE234F10020E9C5 /* WorthItUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		3F1624022DE2395E0020E9C5 /* Share */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3F16240E2DE2395E0020E9C5 /* Build configuration list for PBXNativeTarget "Share" */;
+			buildPhases = (
+				3F1623FF2DE2395E0020E9C5 /* Sources */,
+				3F1624002DE2395E0020E9C5 /* Frameworks */,
+				3F1624012DE2395E0020E9C5 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				3F1624042DE2395E0020E9C5 /* Share */,
+			);
+			name = Share;
+			packageProductDependencies = (
+			);
+			productName = Share;
+			productReference = 3F1624032DE2395E0020E9C5 /* Share.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -184,6 +309,9 @@
 						CreatedOnToolsVersion = 16.4;
 						TestTargetID = 3F1623B02DE234EE0020E9C5;
 					};
+					3F1624022DE2395E0020E9C5 = {
+						CreatedOnToolsVersion = 16.4;
+					};
 				};
 			};
 			buildConfigurationList = 3F1623AC2DE234EE0020E9C5 /* Build configuration list for PBXProject "WorthIt" */;
@@ -192,6 +320,13 @@
 			knownRegions = (
 				en,
 				Base,
+				"en-GB",
+				it,
+				ja,
+				"es-US",
+				"pt-BR",
+				fr,
+				de,
 			);
 			mainGroup = 3F1623A82DE234EE0020E9C5;
 			minimizedProjectReferenceProxies = 1;
@@ -203,6 +338,7 @@
 				3F1623B02DE234EE0020E9C5 /* WorthIt */,
 				3F1623BD2DE234F00020E9C5 /* WorthItTests */,
 				3F1623C72DE234F10020E9C5 /* WorthItUITests */,
+				3F1624022DE2395E0020E9C5 /* Share */,
 			);
 		};
 /* End PBXProject section */
@@ -212,6 +348,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3F464B7C2DEBAB45003C59A5 /* LaunchScreen.storyboard in Resources */,
+				3F9FD6252E85DEA2006A7EA7 /* tuliai.worthit.premium.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -226,6 +364,15 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3F1624012DE2395E0020E9C5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3F9FD6262E85DEA2006A7EA7 /* tuliai.worthit.premium.storekit in Resources */,
+				3F464B7B2DEBAB45003C59A5 /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -253,6 +400,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3F1623FF2DE2395E0020E9C5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -265,6 +419,11 @@
 			isa = PBXTargetDependency;
 			target = 3F1623B02DE234EE0020E9C5 /* WorthIt */;
 			targetProxy = 3F1623C92DE234F10020E9C5 /* PBXContainerItemProxy */;
+		};
+		3F16240C2DE2395E0020E9C5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3F1624022DE2395E0020E9C5 /* Share */;
+			targetProxy = 3F16240B2DE2395E0020E9C5 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -322,7 +481,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -380,7 +539,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -395,26 +554,35 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CODE_SIGN_ENTITLEMENTS = WorthIt/WorthIt.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 1.2;
+				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = 4F94A62T5V;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WorthIt/info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthIt;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -423,26 +591,35 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CODE_SIGN_ENTITLEMENTS = WorthIt/WorthIt.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 1.2;
+				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = 4F94A62T5V;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WorthIt/info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthIt;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -451,16 +628,20 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 1200;
 				DEVELOPMENT_TEAM = 4F94A62T5V;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
-				MARKETING_VERSION = 1.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthItTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WorthIt.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WorthIt";
 			};
 			name = Debug;
@@ -470,16 +651,20 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 1200;
 				DEVELOPMENT_TEAM = 4F94A62T5V;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
-				MARKETING_VERSION = 1.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthItTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WorthIt.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WorthIt";
 			};
 			name = Release;
@@ -488,15 +673,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 1200;
 				DEVELOPMENT_TEAM = 4F94A62T5V;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthItUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = WorthIt;
 			};
 			name = Debug;
@@ -505,16 +695,83 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 1200;
 				DEVELOPMENT_TEAM = 4F94A62T5V;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthItUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = WorthIt;
+			};
+			name = Release;
+		};
+		3F16240F2DE2395E0020E9C5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Share/Share.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1200;
+				DEVELOPMENT_TEAM = 4F94A62T5V;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Share;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthIt.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		3F1624102DE2395E0020E9C5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Share/Share.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1200;
+				DEVELOPMENT_TEAM = 4F94A62T5V;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Share;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthIt.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -553,6 +810,15 @@
 			buildConfigurations = (
 				3F1623D92DE234F10020E9C5 /* Debug */,
 				3F1623DA2DE234F10020E9C5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3F16240E2DE2395E0020E9C5 /* Build configuration list for PBXNativeTarget "Share" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3F16240F2DE2395E0020E9C5 /* Debug */,
+				3F1624102DE2395E0020E9C5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

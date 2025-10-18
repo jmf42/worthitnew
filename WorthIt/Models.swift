@@ -9,6 +9,20 @@ struct AppConstants {
     static let bundleID = Bundle.main.bundleIdentifier ?? "com.juanma.worthmytime" // Your bundle ID
     static let urlScheme = "worthitai"
     static let apiBaseURLKey = "API_PROXY_BASE_URL"
+    static let subscriptionProductMonthlyID = "tuliai.worthit.premium.monthly"
+    static let subscriptionProductAnnualID = "tuliai.worthit.premium.annual"
+    static let subscriptionProductIDs: [String] = [
+        AppConstants.subscriptionProductAnnualID,
+        AppConstants.subscriptionProductMonthlyID
+    ]
+    static let dailyFreeAnalysisLimit = 5
+    static let subscriptionDeepLink = "worthitai://subscribe"
+    static let termsOfUseURL = URL(string: "https://worthit.tuliai.com/terms")!
+    static let privacyPolicyURL = URL(string: "https://worthit.tuliai.com/privacy")!
+    static let supportURL = URL(string: "https://worthit.tuliai.com/support")!
+    static let manageSubscriptionsURL = URL(string: "https://apps.apple.com/account/subscriptions")!
+    static let loggerSubsystem = "worthitapp"
+    static let loggerCategoryPrefix = "worthitapp."
 }
 // MARK: - Decoding Helpers
 private extension KeyedDecodingContainer {
@@ -156,7 +170,29 @@ struct ContentAnalysis: Codable, Identifiable {
 // New struct for AI's categorized comment response
 struct CategorizedCommentAI: Codable {
     let index: Int // Index of the comment in the input array
-    let category: String // e.g., "humor", "insightful", "spam", "neutral", "controversial"
+    let category: String // One of: humor, insightful, controversial, spam, neutral
+
+    private enum CodingKeys: String, CodingKey { case index, category }
+
+    init(index: Int, category: String) {
+        self.index = index
+        let allowed = ["humor", "insightful", "controversial", "spam", "neutral"]
+        let normalized = category.lowercased()
+        self.category = allowed.contains(normalized) ? normalized : "neutral"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let idx = try c.decode(Int.self, forKey: .index)
+        let raw = (try? c.decode(String.self, forKey: .category)) ?? "neutral"
+        self.init(index: idx, category: raw)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(index, forKey: .index)
+        try c.encode(category, forKey: .category)
+    }
 }
 
 
@@ -513,13 +549,14 @@ extension String {
     }
 
     /// Fast, conservative cleanup for LLM context. O(n), regex-only, preserves quotes and meaningful content.
-    /// Steps: strip timestamps, drop stage directions, remove CTA/link noise at head/tail, remove filler-only short lines,
-    /// collapse bare URLs (unless quoted), dedupe exact/near-identical short lines, normalize whitespace, and merge fragments.
-    func cleanedForLLM() -> String {
-        // 0) Normalize newlines and strip timestamps first
-        let text = self.replacingOccurrences(of: "\r\n", with: "\n")
-                       .replacingOccurrences(of: "\r", with: "\n")
-                       .stripTimestamps()
+    /// Steps: strip timestamps (unless `alreadyStripped`), drop stage directions, remove CTA/link noise at head/tail,
+    /// remove filler-only short lines, collapse bare URLs (unless quoted), dedupe exact/near-identical short lines,
+    /// normalize whitespace, and merge fragments.
+    func cleanedForLLM(alreadyStripped: Bool = false) -> String {
+        // 0) Normalize newlines and optionally strip timestamps
+        let normalized = self.replacingOccurrences(of: "\r\n", with: "\n")
+                            .replacingOccurrences(of: "\r", with: "\n")
+        let text = alreadyStripped ? normalized : normalized.stripTimestamps()
 
         // 1) Prepare regexes and keyword sets
         let stageDirRegex = try? NSRegularExpression(pattern: "^\\s*\\[(music|applause|laughter|inaudible|silence|intro|outro|sfx|ambient|background)\\]\\s*$", options: [.caseInsensitive])
@@ -637,44 +674,69 @@ extension String {
 
 // Ensure sanitizedJSONData is here:
 func sanitizedJSONData(from text: String) -> Data? {
-    // 1) Strip code fences and trim
+    // 1) Strip code fences, BOM, and trim
     var cleaned = text
+        .replacingOccurrences(of: "^\\uFEFF", with: "", options: .regularExpression) // BOM
         .replacingOccurrences(of: "^```json", with: "", options: .regularExpression)
         .replacingOccurrences(of: "^```", with: "", options: .regularExpression)
         .replacingOccurrences(of: "```$", with: "", options: .regularExpression)
         .trimmingCharacters(in: .whitespacesAndNewlines)
 
-    // 2) Normalize smart quotes to plain quotes/safe characters to avoid invalid JSON
+    // 2) Normalize only curly single quotes; keep curly double quotes as Unicode to avoid introducing
+    // unescaped straight quotes inside JSON strings (they are valid as-is in JSON)
     cleaned = cleaned
-        .replacingOccurrences(of: "\u{201C}", with: "\"") // “
-        .replacingOccurrences(of: "\u{201D}", with: "\"") // ”
         .replacingOccurrences(of: "\u{2018}", with: "'")    // ‘
         .replacingOccurrences(of: "\u{2019}", with: "'")    // ’
 
-    // 3) Extract ONLY the first complete top-level JSON object using a brace counter (ignore quote state)
-    // Rationale: model sometimes emits unescaped quotes inside values; tracking string state would break.
-    var braceDepth = 0
-    var started = false
-    var startIndex: String.Index? = nil
-    var endIndex: String.Index? = nil
-    for i in cleaned.indices {
-        let ch = cleaned[i]
-        if !started {
-            if ch == "{" { started = true; braceDepth = 1; startIndex = i }
-            continue
+    // 3) Extract ONLY the first complete top-level JSON object using a brace counter with string-awareness
+    func findFirstJSONObjectRange(in s: String) -> Range<String.Index>? {
+        var depth = 0
+        var started = false
+        var start: String.Index? = nil
+        var inString = false
+        var i = s.startIndex
+        while i < s.endIndex {
+            let ch = s[i]
+            if !started {
+                if ch == "{" { started = true; depth = 1; start = i }
+                i = s.index(after: i); continue
+            }
+            if ch == "\"" { // toggle string if not escaped
+                // count preceding backslashes
+                var backslashes = 0
+                var j = s.index(before: i)
+                while j >= s.startIndex && s[j] == "\\" {
+                    backslashes += 1
+                    if j == s.startIndex { break }
+                    j = s.index(before: j)
+                }
+                if backslashes % 2 == 0 { inString.toggle() }
+                i = s.index(after: i); continue
+            }
+            if !inString {
+                if ch == "{" { depth += 1 }
+                else if ch == "}" {
+                    depth -= 1
+                    if depth == 0, let st = start { return st..<s.index(after: i) }
+                }
+            }
+            i = s.index(after: i)
         }
-        if ch == "{" { braceDepth += 1; continue }
-        if ch == "}" {
-            braceDepth -= 1
-            if braceDepth == 0 { endIndex = i; break }
-        }
-    }
-
-    guard let s = startIndex, let e = endIndex else {
-        Logger.shared.warning("sanitizedJSONData: Could not isolate first JSON object. Preview: \(cleaned.prefix(200))", category: .parsing)
         return nil
     }
-    var jsonString = String(cleaned[s...e])
+
+    var range = findFirstJSONObjectRange(in: cleaned)
+    // Fallback: try progressively trimming from the end to find a valid JSON
+    if range == nil {
+        Logger.shared.warning("sanitizedJSONData: Could not isolate first JSON object. Preview: \(cleaned.prefix(200))", category: .parsing)
+        // Attempt to cut from first '{' to last '}' (inclusive)
+        if let firstBrace = cleaned.firstIndex(of: "{"),
+           let lastBrace = cleaned.lastIndex(of: "}") {
+            range = firstBrace..<cleaned.index(after: lastBrace)
+        }
+    }
+    guard let r = range else { return nil }
+    var jsonString = String(cleaned[r])
 
     // 4) Remove trailing commas in objects/arrays
     let trailingCommaPattern = #",(\s*[}\]])"#
@@ -683,7 +745,85 @@ func sanitizedJSONData(from text: String) -> Data? {
     // 5) Best-effort fix: collapse doubled quotes occurrences inside strings (e.g., ""Quote"")
     jsonString = jsonString.replacingOccurrences(of: "\"\"", with: "\"")
 
-    // 6) Validate
+    // 6) Escape raw control characters inside JSON string literals (\n, \r, \t) to keep JSON valid
+    func escapeControlCharsInsideStrings(_ s: String) -> String {
+        var result = String()
+        result.reserveCapacity(s.count + 32)
+        var inString = false
+        var i = s.startIndex
+        while i < s.endIndex {
+            let ch = s[i]
+            if ch == "\"" {
+                // Count preceding backslashes to determine if escaped
+                var backslashes = 0
+                var j = s.index(before: i)
+                while j >= s.startIndex && s[j] == "\\" {
+                    backslashes += 1
+                    if j == s.startIndex { break }
+                    j = s.index(before: j)
+                }
+                if backslashes % 2 == 0 { inString.toggle() }
+                result.append(ch)
+                i = s.index(after: i)
+                continue
+            }
+            if inString {
+                if ch == "\n" {
+                    result.append(contentsOf: "\\n")
+                    i = s.index(after: i)
+                    continue
+                } else if ch == "\r" {
+                    result.append(contentsOf: "\\n")
+                    i = s.index(after: i)
+                    continue
+                } else if ch == "\t" {
+                    result.append(contentsOf: "\\t")
+                    i = s.index(after: i)
+                    continue
+                }
+            }
+            result.append(ch)
+            i = s.index(after: i)
+        }
+        return result
+    }
+    jsonString = escapeControlCharsInsideStrings(jsonString)
+
+    // 7) Balance likely truncation: close open strings/arrays/objects
+    func balanceJSONClosures(_ s: String) -> String {
+        var result = s
+        var inString = false
+        var objDepth = 0
+        var arrDepth = 0
+        var i = result.startIndex
+        while i < result.endIndex {
+            let ch = result[i]
+            if ch == "\"" {
+                // Count preceding backslashes to determine if escaped
+                var backslashes = 0
+                var j = (i > result.startIndex) ? result.index(before: i) : i
+                while j > result.startIndex && result[j] == "\\" {
+                    backslashes += 1
+                    j = result.index(before: j)
+                }
+                if j == result.startIndex && result[j] == "\\" { backslashes += 1 }
+                if backslashes % 2 == 0 { inString.toggle() }
+            } else if !inString {
+                if ch == "{" { objDepth += 1 }
+                else if ch == "}" { objDepth = max(0, objDepth - 1) }
+                else if ch == "[" { arrDepth += 1 }
+                else if ch == "]" { arrDepth = max(0, arrDepth - 1) }
+            }
+            i = result.index(after: i)
+        }
+        if inString { result.append("\"") }
+        if arrDepth > 0 { result.append(String(repeating: "]", count: arrDepth)) }
+        if objDepth > 0 { result.append(String(repeating: "}", count: objDepth)) }
+        return result
+    }
+    jsonString = balanceJSONClosures(jsonString)
+
+    // 8) Validate
     guard let data = jsonString.data(using: .utf8) else { return nil }
     if (try? JSONSerialization.jsonObject(with: data)) == nil {
         Logger.shared.warning("sanitizedJSONData: JSON still invalid after fixes. Preview: \(jsonString.prefix(200))", category: .parsing)

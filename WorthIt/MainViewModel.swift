@@ -88,6 +88,7 @@ class MainViewModel: ObservableObject {
     @Published var currentVideoThumbnailURL: URL?
 
     var rawTranscript: String?
+    private var cleanedTranscriptForLLM: String?
     private var transcriptForAnalysis: String?
 
     @Published var latestTimeSavedEvent: TimeSavedEvent? {
@@ -329,7 +330,14 @@ class MainViewModel: ObservableObject {
             self.analysisResult = cachedAnalysis
             self.essentialsCommentAnalysis = await cache.loadCommentInsights(for: videoId)
             self.rawTranscript = await cache.loadTranscript(for: videoId)
-            self.transcriptForAnalysis = self.rawTranscript?.stripTimestamps()
+            if let transcript = self.rawTranscript {
+                let variants = await preprocessTranscriptVariants(transcript)
+                self.transcriptForAnalysis = variants.stripped
+                self.cleanedTranscriptForLLM = variants.cleaned
+            } else {
+                self.transcriptForAnalysis = nil
+                self.cleanedTranscriptForLLM = nil
+            }
             self.currentVideoTitle = cachedAnalysis.videoTitle
             
             // Set thumbnail URL
@@ -410,12 +418,12 @@ class MainViewModel: ObservableObject {
                     return
                 }
                 self.rawTranscript = transcript
-                self.transcriptForAnalysis = transcript.stripTimestamps()
-                await cache.saveTranscript(transcript, for: videoId)
+                let variants = await preprocessTranscriptVariants(transcript)
+                self.transcriptForAnalysis = variants.stripped
+                self.cleanedTranscriptForLLM = variants.cleaned
                 updateProgress(0.4, message: "Transcript Ready")
 
                 // --- Comments Handling ---
-                await cache.saveComments(comments, for: videoId)
                 updateProgress(0.5, message: "Comments Ready")
                 self.allFetchedComments = comments // Store all fetched
                 // Store the truncated array sent to LLM for index mapping
@@ -518,7 +526,14 @@ class MainViewModel: ObservableObject {
         self.analysisResult = cachedAnalysis
         self.essentialsCommentAnalysis = await cache.loadCommentInsights(for: videoId)
         self.rawTranscript = await cache.loadTranscript(for: videoId)
-        self.transcriptForAnalysis = self.rawTranscript?.stripTimestamps()
+        if let transcript = self.rawTranscript {
+            let variants = await preprocessTranscriptVariants(transcript)
+            self.transcriptForAnalysis = variants.stripped
+            self.cleanedTranscriptForLLM = variants.cleaned
+        } else {
+            self.transcriptForAnalysis = nil
+            self.cleanedTranscriptForLLM = nil
+        }
         self.currentVideoTitle = cachedAnalysis.videoTitle
 
         // Set thumbnail URL (UI layer will try higher-res fallbacks automatically)
@@ -580,6 +595,9 @@ class MainViewModel: ObservableObject {
         let classificationComments = Array(comments.prefix(commentClassificationLimit))
         let insightsComments = Array(comments.prefix(commentInsightsLimit))
         let cache = cacheManager
+        let precleanedTranscript = self.cleanedTranscriptForLLM
+        let insightsContextSource = precleanedTranscript ?? transcript
+        let truncatedInsightsContext = insightsContextSource.truncate(to: 2000)
 
         do {
             var contentAnalysisData: ContentAnalysis!
@@ -589,7 +607,11 @@ class MainViewModel: ObservableObject {
 
             try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask {
-                    async let transcriptTask = self.apiManager.fetchTranscriptSummary(transcript: transcript, videoTitle: titleForGpt)
+                    async let transcriptTask = self.apiManager.fetchTranscriptSummary(
+                        transcript: transcript,
+                        videoTitle: titleForGpt,
+                        precleanedTranscript: precleanedTranscript
+                    )
                     let transcriptResult = try await transcriptTask
 
                     var classificationResult: APIManager.CommentsOnlyResponse?
@@ -631,7 +653,7 @@ class MainViewModel: ObservableObject {
                     group.addTask {
                         let local = try? await self.apiManager.fetchCommentInsights(
                             comments: insightsComments,
-                            transcriptContext: transcript.truncate(to: 2000)
+                            transcriptContext: truncatedInsightsContext
                         )
                         await MainActor.run {
                             self.essentialsCommentAnalysis = local
@@ -718,6 +740,16 @@ class MainViewModel: ObservableObject {
             showFriendlyError(for: error, videoId: videoId)
             updateProgress(1.0, message: "Analysis Failed")
         }
+    }
+
+    private func preprocessTranscriptVariants(_ transcript: String) async -> (stripped: String, cleaned: String) {
+        await Task.detached(priority: .userInitiated) {
+            let stripped = transcript.stripTimestamps()
+            let resolvedStripped = stripped.isEmpty ? transcript : stripped
+            let cleaned = resolvedStripped.cleanedForLLM(alreadyStripped: true)
+            let resolvedCleaned = cleaned.isEmpty ? resolvedStripped : cleaned
+            return (resolvedStripped, resolvedCleaned)
+        }.value
     }
 
     private func fetchTranscript(videoId: String) async throws -> String {
@@ -1167,7 +1199,7 @@ class MainViewModel: ObservableObject {
         hasCommentsAvailableForError = false
 
         let history = Array(qaMessages.dropLast().suffix(6))
-        let transcriptForQA = (self.rawTranscript?.stripTimestamps()) ?? (self.transcriptForAnalysis ?? "")
+        let transcriptForQA = self.transcriptForAnalysis ?? self.rawTranscript ?? ""
         let videoIdForCache = currentVideoID
 
         Task {
@@ -1248,6 +1280,7 @@ class MainViewModel: ObservableObject {
         currentVideoThumbnailURL = nil
         rawTranscript = nil
         transcriptForAnalysis = nil
+        cleanedTranscriptForLLM = nil
         latestTimeSavedEvent = nil
 
         // Clear categorized comments

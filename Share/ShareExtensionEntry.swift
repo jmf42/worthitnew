@@ -47,7 +47,7 @@ final class ShareExtensionEntry: NSObject, UIApplicationDelegate {
 // Simple FileLock mechanism (ensure AppConstants.appGroupID is correctly set)
 struct FileLock {
     private static let lockFileTTL: TimeInterval = 120 // 2 minutes for a lock to be considered stale
-
+    
     private static var lockDirectory: URL {
         guard let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppConstants.appGroupID) else {
             fatalError("App Group ID \(AppConstants.appGroupID) is not configured correctly.")
@@ -58,18 +58,18 @@ struct FileLock {
         }
         return locksURL
     }
-
+    
     static func url(for lockIdentifier: String) -> URL {
         // Sanitize identifier to be a valid filename
         let sanitizedId = lockIdentifier.replacingOccurrences(of: "[^a-zA-Z0-9_-]", with: "_", options: .regularExpression)
         return lockDirectory.appendingPathComponent("\(sanitizedId).lock")
     }
-
+    
     @discardableResult
     static func acquire(_ lockIdentifier: String) -> Bool {
         let fileManager = FileManager.default
         let lockURL = url(for: lockIdentifier)
-
+        
         // Check for and remove stale lock file
         if fileManager.fileExists(atPath: lockURL.path) {
             do {
@@ -79,7 +79,7 @@ struct FileLock {
                     Logger.shared.warning("FileLock: Stale lock file found for '\(lockIdentifier)'. Removing.", category: .lifecycle)
                     try? fileManager.removeItem(at: lockURL)
                 } else {
-                     Logger.shared.info("FileLock: Lock for '\(lockIdentifier)' already held (not stale).", category: .lifecycle)
+                    Logger.shared.info("FileLock: Lock for '\(lockIdentifier)' already held (not stale).", category: .lifecycle)
                     return false // Lock is held and not stale
                 }
             } catch {
@@ -101,7 +101,7 @@ struct FileLock {
             return false
         }
     }
-
+    
     static func release(_ lockIdentifier: String) {
         let lockURL = url(for: lockIdentifier)
         do {
@@ -113,3 +113,4 @@ struct FileLock {
             Logger.shared.error("FileLock: Failed to release lock for '\(lockIdentifier)': \(error.localizedDescription)", category: .lifecycle)
         }
     }
+}

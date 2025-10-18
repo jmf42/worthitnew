@@ -29,6 +29,22 @@ enum NetworkError: LocalizedError {
     }
 }
 
+private actor TranscriptTaskRegistry {
+    private var tasks: [String: Task<String, Error>] = [:]
+
+    func task(for videoId: String) -> Task<String, Error>? {
+        tasks[videoId]
+    }
+
+    func insert(_ task: Task<String, Error>, for videoId: String) {
+        tasks[videoId] = task
+    }
+
+    func remove(for videoId: String) {
+        tasks[videoId] = nil
+    }
+}
+
 protocol GPTServiceProtocol {
     func fetchContentAnalysis(transcript: String, videoTitle: String, comments: [String]) async throws -> ContentAnalysis
     func fetchCommentInsights(comments: [String], transcriptContext: String) async throws -> CommentInsights
@@ -41,6 +57,7 @@ class APIManager: GPTServiceProtocol {
     private var openAIModelName: String
     var lastResponseId: String?
     private var cachedCommentInsights: CommentInsights?
+    private let transcriptTaskRegistry = TranscriptTaskRegistry()
 
     init(session: URLSession = URLSession.shared) {
         let configuration = URLSessionConfiguration.default
@@ -152,97 +169,135 @@ class APIManager: GPTServiceProtocol {
     }
 
     func fetchTranscript(videoId: String) async throws -> String {
-        // Build preferred language list: device language first, then popular fallbacks
+        if let existing = await transcriptTaskRegistry.task(for: videoId) {
+            Logger.shared.info("Joining in-flight transcript fetch for \(videoId)", category: .networking)
+            return try await existing.value
+        }
+
+        let task = Task<String, Error> {
+            try await self.performTranscriptFetch(videoId: videoId)
+        }
+
+        await transcriptTaskRegistry.insert(task, for: videoId)
+
+        do {
+            let transcript = try await task.value
+            await transcriptTaskRegistry.remove(for: videoId)
+            return transcript
+        } catch {
+            await transcriptTaskRegistry.remove(for: videoId)
+            throw error
+        }
+    }
+
+    private func performTranscriptFetch(videoId: String) async throws -> String {
+        struct BackendTranscriptResponse: Decodable { let text: String? }
+
         let deviceLang: String = {
             guard let id = Locale.preferredLanguages.first, !id.isEmpty else { return "en" }
             if #available(iOS 16.0, *) {
                 let lang = Locale.Language(identifier: id)
                 if let code = lang.languageCode?.identifier { return code }
-            } else {
-                // Fallback without deprecated Locale.languageCode: parse primary subtag of BCP‑47 (e.g., "en-US" → "en")
-                if let primary = id.split(separator: "-").first, !primary.isEmpty {
-                    return String(primary)
-                }
+            } else if let primary = id.split(separator: "-").first, !primary.isEmpty {
+                return String(primary)
             }
             let simple = id.prefix(2)
             return simple.isEmpty ? "en" : String(simple)
         }()
-        // Popular coverage list
-        let base = ["en","es","pt","hi","ar"]
-        var ordered = [String]()
+
+        let base = ["en", "es", "pt", "hi", "ar"]
+        var ordered: [String] = []
         func appendUnique(_ code: String) { if !ordered.contains(code) { ordered.append(code) } }
         appendUnique(deviceLang)
-        for c in base { appendUnique(c) }
-        // Truncate to 5
+        for code in base { appendUnique(code) }
         ordered = Array(ordered.prefix(5))
-        let languagesCSV = ordered.joined(separator: ",")
-        // Accept-Language with q-weights
-        let acceptLang = ordered.enumerated().map { idx, code in
+
+        let primaryLanguage = ordered.first ?? "en"
+        let fallbackLanguages = ordered.joined(separator: ",")
+        let fallbackAccept = ordered.enumerated().map { idx, code in
             let q = String(format: "%.1f", 1.0 - (Double(idx) * 0.1))
             return "\(code);q=\(q)"
         }.joined(separator: ", ")
 
-        // Primary attempt with ordered languages
-        Logger.shared.info("Transcript request starting for \(videoId) with languages=\(languagesCSV)", category: .networking, extra: ["accept": acceptLang])
+        Logger.shared.info("Transcript request starting for \(videoId) with primary language=\(primaryLanguage)", category: .networking)
+        let transcriptRequestTimeout: TimeInterval = 25
         do {
             let response: BackendTranscriptResponse = try await performRequest(
                 endpoint: "transcript",
-                queryParams: ["videoId": videoId, "languages": languagesCSV],
-                timeout: 15,
+                queryParams: ["videoId": videoId, "languages": primaryLanguage],
+                timeout: transcriptRequestTimeout,
                 extraHeaders: [
-                    "Accept-Language": acceptLang,
-                    "X-Device-Languages": languagesCSV
+                    "Accept-Language": "\(primaryLanguage);q=1.0",
+                    "X-Device-Languages": primaryLanguage
                 ]
             )
             if let text = response.text, !text.isEmpty { return text }
             throw NetworkError.decodingFailed
         } catch let NetworkError.unknownStatus(code) where code == 404 {
-            Logger.shared.notice("Transcript 404 for \(videoId) with languages list. Retrying without languages...", category: .networking)
-            // Fallback 1: omit languages entirely to let backend auto-detect
+            Logger.shared.notice("Transcript 404 for \(videoId) with primary language. Retrying with fallbacks...", category: .networking)
             if let text = try? await performRequest(
                 endpoint: "transcript",
                 queryParams: ["videoId": videoId],
-                timeout: 15,
-                extraHeaders: [:]
+                timeout: transcriptRequestTimeout
             ) as BackendTranscriptResponse, let t = text.text, !t.isEmpty {
                 Logger.shared.info("Transcript fallback succeeded without languages for \(videoId)", category: .networking)
                 return t
             }
-            // Fallback 2: try a minimal single language (en)
             if let text = try? await performRequest(
                 endpoint: "transcript",
                 queryParams: ["videoId": videoId, "languages": "en"],
-                timeout: 15
+                timeout: transcriptRequestTimeout
             ) as BackendTranscriptResponse, let t = text.text, !t.isEmpty {
                 Logger.shared.info("Transcript fallback succeeded with languages=en for \(videoId)", category: .networking)
+                return t
+            }
+            if fallbackLanguages != primaryLanguage,
+               !fallbackLanguages.isEmpty,
+               let text = try? await performRequest(
+                    endpoint: "transcript",
+                    queryParams: ["videoId": videoId, "languages": fallbackLanguages],
+                    timeout: transcriptRequestTimeout,
+                    extraHeaders: [
+                        "Accept-Language": fallbackAccept,
+                        "X-Device-Languages": fallbackLanguages
+                    ]
+               ) as BackendTranscriptResponse, let t = text.text, !t.isEmpty {
+                Logger.shared.info("Transcript fallback succeeded with expanded languages for \(videoId)", category: .networking)
                 return t
             }
             Logger.shared.warning("Transcript not available after fallbacks for \(videoId)", category: .networking)
             throw NetworkError.unknownStatus(404)
         } catch let NetworkError.network(inner) {
-            // Unwrap inner NetworkError to detect 404 and apply the same fallbacks
-            if let ne = inner as? NetworkError {
-                if case .unknownStatus(let code) = ne, code == 404 {
-                    Logger.shared.notice("Transcript 404 (wrapped) for \(videoId). Retrying fallbacks...", category: .networking)
-                    if let text = try? await performRequest(
-                        endpoint: "transcript",
-                        queryParams: ["videoId": videoId],
-                        timeout: 15,
-                        extraHeaders: [:]
-                    ) as BackendTranscriptResponse, let t = text.text, !t.isEmpty {
-                        Logger.shared.info("Transcript fallback succeeded without languages for \(videoId)", category: .networking)
-                        return t
-                    }
-                    if let text = try? await performRequest(
-                        endpoint: "transcript",
-                        queryParams: ["videoId": videoId, "languages": "en"],
-                        timeout: 15
-                    ) as BackendTranscriptResponse, let t = text.text, !t.isEmpty {
-                        Logger.shared.info("Transcript fallback succeeded with languages=en for \(videoId)", category: .networking)
-                        return t
-                    }
-                    Logger.shared.warning("Transcript not available after fallbacks for \(videoId)", category: .networking)
+            if let ne = inner as? NetworkError, case .unknownStatus(let code) = ne, code == 404 {
+                Logger.shared.notice("Transcript 404 (wrapped) for \(videoId). Retrying fallbacks...", category: .networking)
+                if let text = try? await performRequest(
+                    endpoint: "transcript",
+                    queryParams: ["videoId": videoId],
+                    timeout: transcriptRequestTimeout
+                ) as BackendTranscriptResponse, let t = text.text, !t.isEmpty {
+                    Logger.shared.info("Transcript fallback succeeded without languages for \(videoId)", category: .networking)
+                    return t
                 }
+                if let text = try? await performRequest(
+                    endpoint: "transcript",
+                    queryParams: ["videoId": videoId, "languages": "en"],
+                    timeout: transcriptRequestTimeout
+                ) as BackendTranscriptResponse, let t = text.text, !t.isEmpty {
+                    Logger.shared.info("Transcript fallback succeeded with languages=en for \(videoId)", category: .networking)
+                    return t
+                }
+                if fallbackLanguages != primaryLanguage,
+                   !fallbackLanguages.isEmpty,
+                   let text = try? await performRequest(
+                        endpoint: "transcript",
+                        queryParams: ["videoId": videoId, "languages": fallbackLanguages],
+                        timeout: transcriptRequestTimeout
+                   ) as BackendTranscriptResponse, let t = text.text, !t.isEmpty {
+                    Logger.shared.info("Transcript fallback succeeded with expanded languages for \(videoId)", category: .networking)
+                    return t
+                }
+                Logger.shared.warning("Transcript not available after fallbacks for \(videoId)", category: .networking)
+                throw NetworkError.unknownStatus(404)
             }
             throw NetworkError.network(inner)
         }
@@ -254,7 +309,7 @@ class APIManager: GPTServiceProtocol {
         do {
             let response: CommentsResponse = try await performRequest(
                 endpoint: "comments",
-                queryParams: ["videoId": videoId],
+                queryParams: ["videoId": videoId, "limit": "50"],
                 timeout: 15
             )
             return response.comments ?? []
@@ -300,15 +355,33 @@ class APIManager: GPTServiceProtocol {
             timeout: 120
         )
 
-        let rawProxyResponseStringForLog = String(data: rawProxyResponseData, encoding: .utf8) ?? "Could not convert proxy response data to UTF8 string"
-        Logger.shared.debug("Raw data from OpenAI proxy (size: \(rawProxyResponseData.count)) before DTO decoding: \(rawProxyResponseStringForLog.prefix(1500))", category: .networking)
+        let proxyResponsePreviewProvider: () -> String = {
+            String(data: rawProxyResponseData, encoding: .utf8) ?? "Could not convert proxy response data to UTF8 string"
+        }
+        let rawProxyResponseStringForLog: String?
+        if Logger.isVerboseLoggingEnabled {
+            let preview = proxyResponsePreviewProvider()
+            rawProxyResponseStringForLog = preview
+            Logger.shared.debug(
+                "Raw data from OpenAI proxy (size: \(rawProxyResponseData.count)) before DTO decoding: \(preview.prefix(1500))",
+                category: .networking
+            )
+        } else {
+            rawProxyResponseStringForLog = nil
+        }
 
         // 2. Decode the raw data into OpenAIProxyResponseDTO (best-effort). If it fails, fall back to raw-walk parsing later.
         let proxyDTO: OpenAIProxyResponseDTO?
         do {
             proxyDTO = try JSONDecoder().decode(OpenAIProxyResponseDTO.self, from: rawProxyResponseData)
         } catch let dtoDecodingError {
-            Logger.shared.error("Failed to decode OpenAIProxyResponseDTO from proxy response.", category: .parsing, error: dtoDecodingError, extra: ["rawDataPreview": rawProxyResponseStringForLog.prefix(500)])
+            let preview = rawProxyResponseStringForLog ?? proxyResponsePreviewProvider()
+            Logger.shared.error(
+                "Failed to decode OpenAIProxyResponseDTO from proxy response.",
+                category: .parsing,
+                error: dtoDecodingError,
+                extra: ["rawDataPreview": preview.prefix(500)]
+            )
             // Proceed with fallback path using raw JSON below
             proxyDTO = nil
         }
@@ -495,8 +568,8 @@ class APIManager: GPTServiceProtocol {
     struct TranscriptOnlyResponse: Codable { let longSummary: String; let takeaways: [String]; let gemsOfWisdom: [String] }
     struct CommentsOnlyResponse: Codable { let CommentssentimentSummary: String; let topThemes: [CommentTheme]?; let categorizedComments: [CategorizedCommentAI] }
 
-    func fetchTranscriptSummary(transcript: String, videoTitle: String) async throws -> TranscriptOnlyResponse {
-        let cleaned = transcript.cleanedForLLM()
+    func fetchTranscriptSummary(transcript: String, videoTitle: String, precleanedTranscript: String? = nil) async throws -> TranscriptOnlyResponse {
+        let cleaned = precleanedTranscript ?? transcript.cleanedForLLM()
         let tx = cleaned.isEmpty ? transcript : cleaned
         let prompt = """
 You are WorthIt, AI video summarizer.
@@ -515,8 +588,8 @@ FIELD RULES:
 1) "longSummary" (≤ 250 words) — provide a proper summary of the video, structure MUST be:
    - First line: "Highlights:"
    - Next exactly two lines, each starting with "• " (≤ 18 words):
-     • Bullet 1 = core claim (what this is about).
-     • Bullet 2 = method/result (how it’s argued, a key step, or concrete outcome). If an exact named term exists, include it; otherwise use a concrete detail (number/example).
+     • Bullet 1 = core claim (what this is about) - dont mention "Core claim" literally here.
+     • Bullet 2 = method/result (how it’s argued, a key step, or concrete outcome). If an exact named term exists, include it; otherwise use a concrete detail (number/example). Don't mention "Method/result" literally here.
    - Then a blank line (one empty line between bullets and narrative; do not print the characters "\\n" or "/n" literally).
    - Then 2–4 natural sentences, each on its own line (one line break between sentences; no extra blank lines). Do not write the literal characters "\\n" or "/n"; just separate lines — JSON will escape newlines. Simply write cohesive prose. Include concepts/definitions/rules EXACTLY as they appear (preserve casing/spelling) when present, all in the transcript.
    - Do not output standalone quote characters or empty quoted lines; write only meaningful content lines.

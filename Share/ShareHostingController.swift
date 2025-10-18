@@ -1,70 +1,95 @@
-
 //ShareHostingController.swift`**
-
-
 import UIKit
+import Social
 import SwiftUI
-import UniformTypeIdentifiers // For UTType constants
+import UniformTypeIdentifiers
 
-// This UIViewController is the entry point for the Share Extension UI.
-// It hosts the main SwiftUI view (`RootView`).
-class ShareHostingController: UIViewController {
+@objc(ShareHostingController)
+final class ShareHostingController: SLComposeServiceViewController {
     private var mainViewModel: MainViewModel!
-    private var cacheManager: CacheManager!
-    private var apiManager: APIManager!
-    private var appServices: AppServices! // Hold reference to keep services alive
+    private var subscriptionManager: SubscriptionManager!
+    // Removed appServices
 
-    private var hostingController: UIHostingController<RootView>?
+    private var hostingController: UIHostingController<AnyView>?
     private var initialURLProcessed = false
-
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        Logger.shared.info("ShareHostingController viewDidLoad.", category: .lifecycle)
-        view.backgroundColor = UIColor(Theme.Color.darkBackground) // Use Theme
+        Logger.shared.info("ShareHostingController viewDidLoad.", category: .shareExtension)
+        view.backgroundColor = UIColor.black
+        // Clear composer placeholder to avoid auto-focus incentives (contentText is read-only)
+        self.placeholder = ""
 
-        // Initialize services specifically for this share extension instance
-        // This ensures that if the main app is also running, they don't directly conflict
-        // state-wise, though they share the CacheManager singleton.
-        self.appServices = AppServices()
-        self.mainViewModel = appServices.mainViewModel
+        // Initialize services directly for this Share Extension instance
+        let cacheManager = CacheManager.shared // CacheManager is a singleton
+        let apiManager = APIManager()         // APIManager can be a new instance
+        let subscriptionManager = SubscriptionManager()
+        self.subscriptionManager = subscriptionManager
+        self.mainViewModel = MainViewModel(
+            apiManager: apiManager,
+            cacheManager: cacheManager,
+            subscriptionManager: subscriptionManager,
+            usageTracker: UsageTracker.shared
+        )
+        // Do not force processing state here; processSharedURL will set .processing only if no cache is found.
 
         setupSwiftUIView()
-        
-        // Listen for dismissal requests from SwiftUI views
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleDismissNotification),
-            name: .shareExtensionShouldDismiss,
+            name: .shareExtensionShouldDismissGlobal,
             object: nil
         )
-        
-        // Process the shared item *after* the view is set up.
-        // This ensures the MainViewModel is ready to receive the URL.
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleOpenMainAppNotification(_:)),
+            name: .shareExtensionOpenMainApp,
+            object: nil
+        )
+
         if !initialURLProcessed {
              processSharedItem()
+        }
+
+        // Log share extension usage
+        AnalyticsService.shared.logEvent(.shareExtensionUsed, parameters: ["source": "share_extension"])
+
+        Task { @MainActor in
+            await subscriptionManager.refreshProducts()
+            await subscriptionManager.refreshEntitlement()
         }
     }
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        Logger.shared.info("ShareHostingController viewDidAppear.", category: .lifecycle)
-        // If for some reason URL processing was missed or needs re-triggering (e.g. lifecycle issues)
-        // it could be done here, but typically viewDidLoad or a specific trigger is better.
-        // Ensure that processSharedItem is only called once effectively.
+        Logger.shared.info("ShareHostingController viewDidAppear.", category: .shareExtension)
+        // SLComposeServiceViewController auto-focuses its internal text view.
+        // Dismiss it so the keyboard doesn't appear or get stuck over our SwiftUI UI.
+        dismissComposerKeyboard()
         if !initialURLProcessed && mainViewModel.currentVideoID == nil {
-             Logger.shared.warning("ShareHostingController: Reprocessing shared item in viewDidAppear as it wasn't processed.", category: .lifecycle)
+             Logger.shared.warning("ShareHostingController: Reprocessing shared item in viewDidAppear.", category: .shareExtension)
              processSharedItem()
+        }
+    }
+
+    private func dismissComposerKeyboard() {
+        DispatchQueue.main.async { [weak self] in
+            self?.view.endEditing(true)
+        }
+        // Extra safety: slight delay to catch any re-focus from host
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.view.endEditing(true)
         }
     }
 
     private func setupSwiftUIView() {
         let rootView = RootView()
-            .environmentObject(mainViewModel) // Provide MainViewModel
-            .environmentObject(appServices.cacheManager) // Provide CacheManager if needed by RootView or its children
-            .environmentObject(appServices) // Provide AppServices for any other service access
+            .environmentObject(mainViewModel) // Pass the share extension's MainViewModel instance
+            .environmentObject(subscriptionManager)
 
-        hostingController = UIHostingController(rootView: rootView)
+        hostingController = UIHostingController(rootView: AnyView(rootView))
         guard let hc = hostingController else { return }
 
         addChild(hc)
@@ -77,107 +102,145 @@ class ShareHostingController: UIViewController {
             hc.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         hc.didMove(toParent: self)
-        Logger.shared.info("SwiftUI RootView hosted.", category: .lifecycle)
+        Logger.shared.info("SwiftUI RootView hosted in Share Extension.", category: .shareExtension)
     }
 
     private func processSharedItem() {
-        initialURLProcessed = true // Mark as attempted
-        Logger.shared.debug("ShareHostingController: Attempting to process shared item.", category: .lifecycle)
+        guard !initialURLProcessed else {
+            Logger.shared.warning("processSharedItem called again; ignoring duplicate call.", category: .shareExtension)
+            return
+        }
+        initialURLProcessed = true // Set the flag immediately to prevent re-entry
+        Logger.shared.debug("ShareHostingController: Attempting to process shared item.", category: .shareExtension)
 
         guard let extensionContext = self.extensionContext,
               let inputItems = extensionContext.inputItems as? [NSExtensionItem] else {
-            Logger.shared.error("Failed to get extension context or input items.", category: .lifecycle)
-            mainViewModel.setError(message: "Could not read shared content.", canRetry: false)
-            // Optionally call self.dismissExtension(withError: true) after a delay
+            Logger.shared.error("Failed to get extension context or input items.", category: .shareExtension)
+            // setError is internal by default in MainViewModel, ensure MainViewModel.swift is in Share target
+            mainViewModel.setPublicError(message: "Could not read shared content.", canRetry: false)
             return
         }
 
         guard !inputItems.isEmpty else {
-            Logger.shared.warning("No input items found in extension context.", category: .lifecycle)
-            mainViewModel.setError(message: "No content was shared.", canRetry: false)
+            Logger.shared.warning("No input items found in extension context.", category: .shareExtension)
+            mainViewModel.setPublicError(message: "No content was shared.", canRetry: false)
             return
         }
         
-        // Prioritize URL type
         let urlTypeIdentifier = UTType.url.identifier
         let textTypeIdentifier = UTType.plainText.identifier
 
-        for item in inputItems {
-            if let attachments = item.attachments {
-                for attachment in attachments {
-                    if attachment.hasItemConformingToTypeIdentifier(urlTypeIdentifier) {
-                        attachment.loadItem(forTypeIdentifier: urlTypeIdentifier, options: nil) { [weak self] (data, error) in
-                            DispatchQueue.main.async {
-                                guard let self = self else { return }
-                                if let url = data as? URL {
-                                    Logger.shared.info("Successfully loaded URL: \(url.absoluteString)", category: .lifecycle)
-                                    self.mainViewModel.processSharedURL(url)
+        Task { // Perform async work in a Task
+            for item in inputItems {
+                if let attachments = item.attachments {
+                    for attachment in attachments {
+                        if attachment.hasItemConformingToTypeIdentifier(urlTypeIdentifier) {
+                            do {
+                                if let url = try await attachment.loadItem(forTypeIdentifier: urlTypeIdentifier, options: nil) as? URL {
+                                    Logger.shared.info("Successfully loaded URL: \(url.absoluteString)", category: .shareExtension)
+                                    await MainActor.run { mainViewModel.processSharedURL(url) }
                                     return // Process first valid URL
-                                } else if let error = error {
-                                    Logger.shared.error("Error loading URL item: \(error.localizedDescription)", category: .lifecycle)
-                                } else {
-                                     Logger.shared.error("Failed to cast item to URL.", category: .lifecycle)
                                 }
+                            } catch {
+                                Logger.shared.error("Error loading URL item: \(error.localizedDescription)", category: .shareExtension, error: error)
                             }
                         }
-                        return // Process first provider that has a URL
                     }
-                }
-                // If no URL type found, try text type for URLs within text
-                for attachment in attachments {
-                     if attachment.hasItemConformingToTypeIdentifier(textTypeIdentifier) {
-                        attachment.loadItem(forTypeIdentifier: textTypeIdentifier, options: nil) { [weak self] (data, error) in
-                            DispatchQueue.main.async {
-                                guard let self = self else { return }
-                                if let text = data as? String, let url = URLParser.firstSupportedVideoURL(in: text) {
-                                    Logger.shared.info("Successfully parsed URL from text: \(url.absoluteString)", category: .lifecycle)
-                                    self.mainViewModel.processSharedURL(url)
+                    // If no URL type found, try text type
+                    for attachment in attachments {
+                         if attachment.hasItemConformingToTypeIdentifier(textTypeIdentifier) {
+                            do {
+                                if let text = try await attachment.loadItem(forTypeIdentifier: textTypeIdentifier, options: nil) as? String,
+                                   let url = URLParser.firstSupportedVideoURL(in: text) {
+                                    Logger.shared.info("Successfully parsed URL from text: \(url.absoluteString)", category: .shareExtension)
+                                    await MainActor.run { mainViewModel.processSharedURL(url) }
                                     return // Process first valid URL found in text
-                                } else if let error = error {
-                                    Logger.shared.error("Error loading text item: \(error.localizedDescription)", category: .lifecycle)
-                                } else if data != nil {
-                                     Logger.shared.warning("Shared text did not contain a parsable video URL.", category: .lifecycle)
+                                } else {
+                                     Logger.shared.warning("Shared text did not contain a parsable video URL or was not String.", category: .shareExtension)
                                 }
+                            } catch {
+                                Logger.shared.error("Error loading text item: \(error.localizedDescription)", category: .shareExtension, error: error)
                             }
                         }
-                        return // Process first provider that has text
                     }
                 }
             }
-        }
-        // If loop completes and no URL processed by mainViewModel
-        // (e.g., all attachments failed or were not of expected type)
-        // Check if an error has already been set by one of the failed loadItems.
-        // If not, set a generic error.
-        if mainViewModel.currentVideoID == nil && mainViewModel.viewState != .error { // Check if already errored or processing
-            Logger.shared.warning("No suitable URL or text item found after checking all attachments.", category: .lifecycle)
-            mainViewModel.setError(message: "Could not find a valid video link in the shared content.", canRetry: false)
+            // If loop completes and no URL processed
+            await MainActor.run {
+                 if mainViewModel.currentVideoID == nil && mainViewModel.viewState != .error {
+                    Logger.shared.warning("No suitable URL or text item found after checking all attachments.", category: .shareExtension)
+                    mainViewModel.setPublicError(message: "Could not find a valid video link in the shared content.", canRetry: false)
+                }
+            }
         }
     }
     
     @objc private func handleDismissNotification() {
-        Logger.shared.info("Dismiss notification received. Closing extension.", category: .lifecycle)
+        Logger.shared.info("Dismiss notification received. Closing extension.", category: .shareExtension)
         self.dismissExtension(withError: false)
     }
 
-    private func dismissExtension(withError: Bool) {
-        if withError {
-            // Cancel any ongoing work in the extensionContext
-            self.extensionContext?.cancelRequest(withError: NSError(domain: AppConstants.bundleID, code: 1, userInfo: [NSLocalizedDescriptionKey: "Share extension cancelled with error."]))
+    @objc private func handleOpenMainAppNotification(_ notification: Notification) {
+        let deepLink = (notification.object as? URL) ?? URL(string: AppConstants.subscriptionDeepLink)
+        if let deepLink {
+            Logger.shared.info("Open main app notification received. Attempting deep link: \(deepLink.absoluteString)", category: .shareExtension)
+            self.dismissExtension(withError: false, redirectURL: deepLink)
         } else {
-            self.extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+            Logger.shared.warning("Open main app notification received without a valid URL. Dismissing extension only.", category: .shareExtension)
+            self.dismissExtension(withError: false)
         }
-        // Release the lock when the UI is being dismissed
+    }
+
+    private func dismissExtension(withError: Bool, redirectURL: URL? = nil) {
+        // Release the general share-extension lock acquired at launch
         FileLock.release("com.worthitai.share.active.lock")
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+
+            let finish: () -> Void = {
+                self.extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+            }
+
+            if withError {
+                self.extensionContext?.cancelRequest(withError: NSError(domain: AppConstants.bundleID, code: 1, userInfo: [NSLocalizedDescriptionKey: "Share extension cancelled with error."]))
+                return
+            }
+
+            guard let url = redirectURL else {
+                finish()
+                return
+            }
+
+            self.extensionContext?.open(url) { success in
+                if success {
+                    Logger.shared.info("Successfully handed off to WorthIt app for subscription.", category: .shareExtension)
+                } else {
+                    Logger.shared.error("Failed to open WorthIt app via deep link from share extension.", category: .shareExtension)
+                }
+                finish()
+            }
+        }
+    }
+
+    // MARK: - SLComposeServiceViewController required overrides
+    override func isContentValid() -> Bool {
+        // We validate inputs internally when processing the shared item.
+        return true
+    }
+
+    override func didSelectPost() {
+        // Finish and dismiss the extension when the user taps Post/Done.
+        self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+    }
+
+    override func configurationItems() -> [Any]! {
+        // We don't present additional configuration items.
+        return []
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-        Logger.shared.info("ShareHostingController deinitialized.", category: .lifecycle)
+        Logger.shared.info("ShareHostingController deinitialized.", category: .shareExtension)
     }
-}
-
-// Notification name for dismissal
-extension Notification.Name {
-    static let shareExtensionShouldDismiss = Notification.Name("ShareExtensionShouldDismiss")
 }

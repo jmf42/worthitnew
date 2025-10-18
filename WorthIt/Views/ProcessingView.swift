@@ -13,6 +13,7 @@ struct ProcessingView: View {
     @State private var isAnimating = false
     @State private var currentStatusIndex = 0
     @State private var displayProgress: Double = 0.0
+    @State private var completionTask: Task<Void, Never>? = nil
     
     private let statusMessages = [
         "Analyzing Transcript...",
@@ -75,7 +76,7 @@ struct ProcessingView: View {
                 Spacer()
                 
                 // The progress bar, driven by the 3-second animation
-                ShimmeringProgressView(progress: displayProgress)
+                ShimmeringProgressView(progress: displayProgress, isAnimating: isAnimating)
                     .padding(.horizontal, 40)
             }
             .padding()
@@ -88,6 +89,14 @@ struct ProcessingView: View {
             withAnimation(.linear(duration: 3.0)) {
                 displayProgress = 1.0
             }
+            completionTask?.cancel()
+            completionTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_100_000_000)
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.35)) {
+                    isAnimating = false
+                }
+            }
         }
         .onReceive(timer) { _ in
             // Cycle through the 4 status messages over the 3-second duration
@@ -98,6 +107,7 @@ struct ProcessingView: View {
             }
         }
         .onDisappear {
+            completionTask?.cancel()
             timer.upstream.connect().cancel()
         }
     }
@@ -106,6 +116,7 @@ struct ProcessingView: View {
 // The enhanced, self-animating shimmering progress view
 struct ShimmeringProgressView: View {
     let progress: Double
+    let isAnimating: Bool
     @State private var shimmerPosition: CGFloat = -0.5
     
     var body: some View {
@@ -113,7 +124,11 @@ struct ShimmeringProgressView: View {
             ZStack(alignment: .leading) {
                 // Background track
                 Capsule()
-                    .fill(Theme.Color.sectionBackground.opacity(0.5))
+                    .fill(Theme.Color.sectionBackground.opacity(0.4))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
+                    )
                 
                 // Progress fill, driven by the parent view's state
                 Capsule()
@@ -141,13 +156,29 @@ struct ShimmeringProgressView: View {
             }
             .clipShape(Capsule())
             .onAppear {
-                // The shimmer animation is continuous and independent
-                withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-                    shimmerPosition = 1.5
+                startShimmerIfNeeded()
+            }
+            .onChange(of: isAnimating) { active in
+                if active {
+                    startShimmerIfNeeded()
+                } else {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        shimmerPosition = -0.5
+                    }
                 }
             }
         }
         .frame(height: 10)
+    }
+
+    @MainActor
+    private func startShimmerIfNeeded() {
+        guard isAnimating else { return }
+        // Restart shimmer from the leading edge
+        shimmerPosition = -0.5
+        withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+            shimmerPosition = 1.5
+        }
     }
 }
 
