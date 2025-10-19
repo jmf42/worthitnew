@@ -1393,43 +1393,75 @@ struct RecentVideosCenterModal: View {
                 .padding(.horizontal, 8)
 
                 VStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack(spacing: 16) {
                             ZStack {
                                 Circle()
                                     .fill(Theme.Gradient.appBluePurple)
-                                    .frame(width: 48, height: 48)
+                                    .frame(width: 52, height: 52)
                                     .overlay(
-                                        Circle().stroke(.white.opacity(0.2), lineWidth: 1)
+                                        Circle()
+                                            .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                                            .shadow(color: Theme.Color.accent.opacity(0.45), radius: 12, y: 6)
                                     )
-                                Image(systemName: "clock.fill")
-                                    .font(.system(size: 22, weight: .semibold))
+
+                                Image(systemName: "play.rectangle.fill")
+                                    .font(.system(size: 24, weight: .semibold))
                                     .foregroundColor(.white)
                             }
 
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 Text("Recent Videos")
                                     .font(Theme.Font.title3.weight(.bold))
                                     .foregroundColor(Theme.Color.primaryText)
 
                                 Text("Jump back into your latest WorthIt insights.")
                                     .font(Theme.Font.subheadline)
-                                    .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
+                                    .foregroundColor(Theme.Color.secondaryText.opacity(0.92))
                             }
+
+                            Spacer()
+
+                            Capsule()
+                                .fill(Theme.Gradient.appBluePurple.opacity(0.65))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Theme.Color.accent.opacity(0.25), lineWidth: 1)
+                                )
+                                .frame(width: 82, height: 30)
+                                .overlay(
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "sparkles")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(.white.opacity(0.92))
+                                        Text("WorthIt")
+                                            .font(Theme.Font.caption.weight(.semibold))
+                                            .foregroundColor(.white.opacity(0.92))
+                                    }
+                                )
                         }
 
-                        RoundedRectangle(cornerRadius: 999, style: .continuous)
-                            .fill(Theme.Gradient.appBluePurple)
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(Theme.Color.sectionBackground.opacity(0.6))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
+                            )
                             .frame(height: 3)
-                            .opacity(0.65)
+                            .overlay(
+                                LinearGradient(colors: [Theme.Color.accent.opacity(0.8), Theme.Color.purple.opacity(0.6)], startPoint: .leading, endPoint: .trailing)
+                                    .frame(height: 3)
+                                    .cornerRadius(999)
+                            )
+                            .opacity(0.9)
                     }
-                    .padding(.horizontal, 22)
+                    .padding(.horizontal, 24)
                     .padding(.top, 28)
-                    .padding(.bottom, 18)
+                    .padding(.bottom, 16)
 
                     Divider()
-                        .background(Theme.Color.accent.opacity(0.12))
-                        .padding(.horizontal, 22)
+                        .background(Theme.Color.accent.opacity(0.15))
+                        .padding(.horizontal, 24)
 
                     if items.isEmpty {
                         VStack(spacing: 16) {
@@ -1450,95 +1482,117 @@ struct RecentVideosCenterModal: View {
                         .padding(.vertical, 48)
                     } else {
                         ScrollView {
-                            LazyVStack(spacing: 14) {
+                            LazyVStack(spacing: 16) {
                                 ForEach(items) { item in
                                     Button(action: { onSelect(item) }) {
                                         let title = cleanedTitle(for: item)
                                         let formattedDate = item.modifiedAt.formatted(date: .abbreviated, time: .omitted)
 
-                                        HStack(alignment: .top, spacing: 14) {
-                                            AsyncImage(url: item.thumbnailURL) { phase in
-                                                switch phase {
-                                                case .empty:
-                                                    ZStack { Theme.Color.sectionBackground }
-                                                case .success(let image):
-                                                    image
-                                                        .resizable()
-                                                        .scaledToFill()
-                                                case .failure:
-                                                    Image(systemName: "film.fill")
-                                                        .resizable()
-                                                        .scaledToFit()
-                                                        .padding(12)
-                                                @unknown default:
-                                                    Color.clear
+                                        HStack(alignment: .center, spacing: 18) {
+                                            ZStack {
+                                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                                    .fill(Theme.Color.sectionBackground.opacity(0.85))
+                                                AsyncImage(url: item.thumbnailURL) { phase in
+                                                    switch phase {
+                                                    case .empty:
+                                                        ProgressView()
+                                                            .progressViewStyle(CircularProgressViewStyle(tint: Theme.Color.accent))
+                                                    case .success(let image):
+                                                        image
+                                                            .resizable()
+                                                            .scaledToFill()
+                                                    case .failure:
+                                                        Image(systemName: "film.fill")
+                                                            .resizable()
+                                                            .scaledToFit()
+                                                            .padding(16)
+                                                            .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
+                                                    @unknown default:
+                                                        Color.clear
+                                                    }
                                                 }
                                             }
-                                            .frame(width: 124, height: 70)
-                                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                                            .frame(width: 128, height: 78)
+                                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                                             .overlay(
-                                                RoundedRectangle(cornerRadius: 14)
-                                                    .stroke(borderGradient, lineWidth: 1.0)
+                                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                                    .strokeBorder(borderGradient, lineWidth: 1)
+                                                    .opacity(0.9)
                                             )
+                                            .shadow(color: .black.opacity(0.35), radius: 18, y: 10)
 
-                                            VStack(alignment: .leading, spacing: 6) {
+                                            VStack(alignment: .leading, spacing: 10) {
                                                 if !title.isEmpty {
                                                     Text(title)
                                                         .font(Theme.Font.subheadlineBold)
                                                         .foregroundColor(Theme.Color.primaryText)
                                                         .lineLimit(2)
-                                                        .layoutPriority(1)
+                                                        .multilineTextAlignment(.leading)
                                                 }
-                                            }
-                                            .frame(height: 70, alignment: .topLeading)
 
-                                            Spacer(minLength: 12)
-
-                                            HStack(alignment: .center, spacing: 12) {
-                                                VStack(alignment: .trailing, spacing: 10) {
-                                                    Text(formattedDate)
+                                                HStack(spacing: 10) {
+                                                    Label(formattedDate, systemImage: "calendar")
+                                                        .labelStyle(.titleAndIcon)
                                                         .font(Theme.Font.caption)
-                                                        .foregroundColor(Theme.Color.secondaryText)
-                                                    if let score = item.finalScore {
+                                                        .foregroundColor(Theme.Color.secondaryText.opacity(0.95))
+                                                        .padding(.horizontal, 12)
+                                                        .padding(.vertical, 6)
+                                                        .background(
+                                                            Capsule()
+                                                                .fill(Theme.Color.sectionBackground.opacity(0.7))
+                                                        )
+                                                        .overlay(
+                                                            Capsule()
+                                                                .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
+                                                        )
+
+                                                    Spacer(minLength: 0)
+
+                                                    if let score = displayedScore(for: item) {
                                                         scoreBadge(for: score)
-                                                    } else {
-                                                        scoreBadgePlaceholder()
                                                     }
                                                 }
-                                                .frame(maxWidth: .infinity, alignment: .trailing)
-
-                                                Image(systemName: "chevron.right")
-                                                    .foregroundColor(Theme.Color.secondaryText)
                                             }
-                                            .padding(.vertical, 10)
-                                            .padding(.horizontal, 14)
-                                            .frame(width: 148, alignment: .trailing)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                    .fill(Theme.Color.sectionBackground.opacity(0.86))
-                                            )
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                    .stroke(Theme.Color.accent.opacity(0.18), lineWidth: 1)
-                                            )
+
+                                            Spacer(minLength: 0)
+
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 16, weight: .semibold))
+                                                .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                                                .padding(12)
+                                                .background(
+                                                    Circle()
+                                                        .fill(Theme.Color.sectionBackground.opacity(0.75))
+                                                )
+                                                .overlay(
+                                                    Circle()
+                                                        .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
+                                                )
                                         }
-                                        .padding(.horizontal, 18)
-                                        .padding(.vertical, 14)
+                                        .padding(.horizontal, 20)
+                                        .padding(.vertical, 18)
                                         .background(
-                                            RoundedRectangle(cornerRadius: 16)
-                                                .fill(Theme.Color.sectionBackground.opacity(0.72))
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 16)
-                                                .stroke(Theme.Color.accent.opacity(0.16), lineWidth: 1)
+                                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                                .fill(
+                                                    LinearGradient(
+                                                        gradient: Gradient(colors: [Theme.Color.sectionBackground.opacity(0.92), Theme.Color.sectionBackground.opacity(0.65)]),
+                                                        startPoint: .topLeading,
+                                                        endPoint: .bottomTrailing
+                                                    )
+                                                )
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                                        .strokeBorder(borderGradient.opacity(0.55), lineWidth: 1)
+                                                )
+                                                .shadow(color: .black.opacity(0.25), radius: 22, y: 14)
                                         )
                                     }
                                     .buttonStyle(.plain)
                                     .contentShape(Rectangle())
                                 }
                             }
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 24)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 26)
                         }
                         .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
                     }
@@ -1597,26 +1651,62 @@ struct RecentVideosCenterModal: View {
         .preferredColorScheme(.dark)
     }
 
-    private func scoreBadge(for score: Double) -> some View {
-        let formattedScore = "\(Int(score))%"
-        return Text(formattedScore)
-            .font(Theme.Font.subheadline.weight(.bold))
-            .foregroundColor(Theme.Color.primaryText)
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
-            .frame(width: 54, height: 54)
-            .background(
-                Circle()
-                    .fill(Theme.Color.sectionBackground.opacity(0.9))
-            )
-            .overlay(
-                Circle()
-                    .stroke(borderGradient, lineWidth: 1.2)
-            )
+    private func displayedScore(for item: CacheManager.RecentAnalysisItem) -> Double? {
+        if let score = item.finalScore {
+            return score
+        }
+        // Fallback when there are no comment insights cached yet – mirror the transcript-only heuristic.
+        return 60
     }
 
-    private func scoreBadgePlaceholder() -> some View {
-        scoreBadge(for: 0).hidden()
+    private func scoreBadge(for score: Double) -> some View {
+        let clampedScore = max(0, min(score, 100))
+        let formattedScore = "\(Int(clampedScore))%"
+
+        return ZStack {
+            Circle()
+                .fill(Theme.Color.sectionBackground.opacity(0.88))
+                .shadow(color: Theme.Color.accent.opacity(0.35), radius: 12, y: 6)
+
+            Circle()
+                .strokeBorder(scoreGradient(for: clampedScore), lineWidth: 2)
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
+                        .blur(radius: 0.5)
+                )
+
+            VStack(spacing: 4) {
+                Text(formattedScore)
+                    .font(Theme.Font.subheadline.weight(.bold))
+                    .foregroundColor(.white)
+                    .minimumScaleFactor(0.8)
+
+                Text("Score")
+                    .font(Theme.Font.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                    .tracking(0.5)
+            }
+            .padding(.vertical, 4)
+        }
+        .frame(width: 66, height: 66)
+    }
+
+    private func scoreGradient(for score: Double) -> LinearGradient {
+        let colors: [Color]
+        switch score {
+        case 80...:
+            colors = [Theme.Color.accent, Theme.Color.purple]
+        case 60..<80:
+            colors = [Theme.Color.orange.opacity(0.9), Theme.Color.accent]
+        case 40..<60:
+            colors = [Theme.Color.warning.opacity(0.85), Theme.Color.orange.opacity(0.8)]
+        default:
+            colors = [Theme.Color.error.opacity(0.85), Theme.Color.orange.opacity(0.75)]
+        }
+
+        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     private func cleanedTitle(for item: CacheManager.RecentAnalysisItem) -> String {

@@ -329,8 +329,21 @@ class MainViewModel: ObservableObject {
             // Populate view model from cache
             self.analysisResult = cachedAnalysis
             self.essentialsCommentAnalysis = await cache.loadCommentInsights(for: videoId)
-            self.rawTranscript = await cache.loadTranscript(for: videoId)
-            if let transcript = self.rawTranscript {
+
+            var resolvedTranscript = await cache.loadTranscript(for: videoId)
+            if resolvedTranscript == nil {
+                do {
+                    Logger.shared.info("Transcript cache miss during share flow. Refetching for \(videoId)", category: .cache)
+                    let fetched = try await apiManager.fetchTranscript(videoId: videoId)
+                    await cache.saveTranscript(fetched, for: videoId)
+                    resolvedTranscript = fetched
+                } catch {
+                    Logger.shared.warning("Failed to refetch transcript during share flow: \(error.localizedDescription)", category: .services)
+                }
+            }
+
+            self.rawTranscript = resolvedTranscript
+            if let transcript = resolvedTranscript {
                 let variants = await preprocessTranscriptVariants(transcript)
                 self.transcriptForAnalysis = variants.stripped
                 self.cleanedTranscriptForLLM = variants.cleaned
@@ -525,8 +538,21 @@ class MainViewModel: ObservableObject {
         // Populate view model from cache
         self.analysisResult = cachedAnalysis
         self.essentialsCommentAnalysis = await cache.loadCommentInsights(for: videoId)
-        self.rawTranscript = await cache.loadTranscript(for: videoId)
-        if let transcript = self.rawTranscript {
+
+        var resolvedTranscript = await cache.loadTranscript(for: videoId)
+        if resolvedTranscript == nil {
+            do {
+                Logger.shared.info("Transcript cache miss during restore. Refetching for \(videoId)", category: .cache)
+                let fetched = try await apiManager.fetchTranscript(videoId: videoId)
+                await cache.saveTranscript(fetched, for: videoId)
+                resolvedTranscript = fetched
+            } catch {
+                Logger.shared.warning("Failed to refetch transcript during restore: \(error.localizedDescription)", category: .services)
+            }
+        }
+
+        self.rawTranscript = resolvedTranscript
+        if let transcript = resolvedTranscript {
             let variants = await preprocessTranscriptVariants(transcript)
             self.transcriptForAnalysis = variants.stripped
             self.cleanedTranscriptForLLM = variants.cleaned
@@ -597,7 +623,7 @@ class MainViewModel: ObservableObject {
         let cache = cacheManager
         let precleanedTranscript = self.cleanedTranscriptForLLM
         let insightsContextSource = precleanedTranscript ?? transcript
-        let truncatedInsightsContext = insightsContextSource.truncate(to: 2000)
+        let truncatedInsightsContext = insightsContextSource.truncate(to: 12000)
 
         do {
             var contentAnalysisData: ContentAnalysis!
@@ -1199,13 +1225,49 @@ class MainViewModel: ObservableObject {
         hasCommentsAvailableForError = false
 
         let history = Array(qaMessages.dropLast().suffix(6))
-        let transcriptForQA = self.transcriptForAnalysis ?? self.rawTranscript ?? ""
+        let initialTranscriptForQA = self.transcriptForAnalysis ?? self.rawTranscript ?? ""
         let videoIdForCache = currentVideoID
 
         Task {
+            var workingTranscript = initialTranscriptForQA
+
+            if workingTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let vid = videoIdForCache {
+                if let cachedTranscript = await cache.loadTranscript(for: vid) {
+                    workingTranscript = cachedTranscript
+                    let variants = await self.preprocessTranscriptVariants(cachedTranscript)
+                    await MainActor.run {
+                        self.rawTranscript = cachedTranscript
+                        self.transcriptForAnalysis = variants.stripped
+                        self.cleanedTranscriptForLLM = variants.cleaned
+                    }
+                } else if let fetched = try? await self.apiManager.fetchTranscript(videoId: vid) {
+                    workingTranscript = fetched
+                    await cache.saveTranscript(fetched, for: vid)
+                    let variants = await self.preprocessTranscriptVariants(fetched)
+                    await MainActor.run {
+                        self.rawTranscript = fetched
+                        self.transcriptForAnalysis = variants.stripped
+                        self.cleanedTranscriptForLLM = variants.cleaned
+                    }
+                }
+            }
+
+            if workingTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let fallbackMessage = "Transcript unavailable for this video right now."
+                await MainActor.run {
+                    self.qaMessages.append(ChatMessage(content: "Sorry, I couldn't answer that. \(fallbackMessage)", isUser: false))
+                    self.isQaLoading = false
+                }
+                if let vid = videoIdForCache {
+                    let messages = await MainActor.run { self.qaMessages }
+                    await cache.saveQAMessages(messages, for: vid)
+                }
+                return
+            }
+
             do {
                 let response = try await apiManager.answerQuestion(
-                    transcript: transcriptForQA,
+                    transcript: workingTranscript,
                     question: currentQuestion,
                     history: history
                 )

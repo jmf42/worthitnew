@@ -257,37 +257,162 @@ struct ChatMessageView: View {
     }
 
     private var messageContent: some View {
-        Text(message.content)
-            .font(Theme.Font.body)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .textSelection(.enabled)
-            .contentShape(Rectangle())
-            .frame(maxWidth: UIScreen.main.bounds.width * 0.75, alignment: .leading)
-            .contextMenu {
-                Button {
-                    UIPasteboard.general.string = message.content
-                    withAnimation { showCopyConfirmation = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        withAnimation { showCopyConfirmation = false }
+        let segments = parsedSegments()
+
+        return VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .heading(let text):
+                    Text(text)
+                        .font(Theme.Font.subheadlineBold)
+                        .foregroundColor(message.isUser ? .white : Theme.Color.primaryText)
+                case .paragraph(let text):
+                    Text(text)
+                        .font(Theme.Font.body)
+                        .foregroundColor(message.isUser ? .white : Theme.Color.primaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .bullet(let text):
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("•")
+                            .font(Theme.Font.body)
+                            .foregroundColor(message.isUser ? .white : Theme.Color.primaryText)
+                            .padding(.top, 1)
+                        Text(text)
+                            .font(Theme.Font.body)
+                            .foregroundColor(message.isUser ? .white : Theme.Color.primaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                } label: {
-                    Label("Copy Text", systemImage: "doc.on.doc")
                 }
             }
-            .overlay(
-                GeometryReader { geo in
-                    Text("Copied!")
-                        .font(Theme.Font.captionBold)
-                        .foregroundColor(.white)
-                        .padding(5)
-                        .background(Color.black.opacity(0.7))
-                        .clipShape(Capsule())
-                        .position(x: geo.size.width / 2, y: -10)
-                        .opacity(showCopyConfirmation ? 1 : 0)
-                        .allowsHitTesting(false)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .textSelection(.enabled)
+        .contentShape(Rectangle())
+        .frame(maxWidth: UIScreen.main.bounds.width * 0.75, alignment: .leading)
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = message.content
+                withAnimation { showCopyConfirmation = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation { showCopyConfirmation = false }
                 }
-            )
+            } label: {
+                Label("Copy Text", systemImage: "doc.on.doc")
+            }
+        }
+        .overlay(
+            GeometryReader { geo in
+                Text("Copied!")
+                    .font(Theme.Font.captionBold)
+                    .foregroundColor(.white)
+                    .padding(5)
+                    .background(Color.black.opacity(0.7))
+                    .clipShape(Capsule())
+                    .position(x: geo.size.width / 2, y: -10)
+                    .opacity(showCopyConfirmation ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+        )
+    }
+
+    private enum MessageSegment: Hashable {
+        case heading(String)
+        case paragraph(String)
+        case bullet(String)
+    }
+
+    private func parsedSegments() -> [MessageSegment] {
+        var normalized = message.content
+            .replacingOccurrences(of: "\\r\\n", with: "\n")
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Normalize inline bullet lists like "Practical steps: - Do X - Do Y"
+        let inlineBulletPatterns: [String] = [
+            ": - ",
+            ". - ",
+            "? - ",
+            "! - "
+        ]
+        for pattern in inlineBulletPatterns {
+            let replacement = "\(pattern.prefix(1))\n- "
+            normalized = normalized.replacingOccurrences(of: pattern, with: replacement)
+        }
+        // Fallback: any remaining " - " that likely indicates bullet gets own line
+        normalized = normalized.replacingOccurrences(of: " - ", with: "\n- ")
+
+        if message.isUser {
+            return normalized
+                .components(separatedBy: "\n\n")
+                .compactMap {
+                    let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : MessageSegment.paragraph(trimmed)
+                }
+        }
+
+        var segments: [MessageSegment] = []
+        var paragraphBuffer: String = ""
+
+        func flushParagraph() {
+            let trimmed = paragraphBuffer.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty {
+                segments.append(.paragraph(trimmed))
+            }
+            paragraphBuffer = ""
+        }
+
+        let headingLookup: [(String, String)] = [
+            ("quick context:", "Quick Context"),
+            ("main answer:", "Main Answer"),
+            ("conclusion:", "Conclusion")
+        ]
+
+        let lines = normalized.components(separatedBy: "\n")
+        for rawLine in lines {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.isEmpty {
+                flushParagraph()
+                continue
+            }
+
+            let lower = trimmed.lowercased()
+            if let heading = headingLookup.first(where: { lower.hasPrefix($0.0) }) {
+                flushParagraph()
+                segments.append(.heading(heading.1))
+                let remainder = trimmed.dropFirst(heading.0.count).trimmingCharacters(in: .whitespaces)
+                if !remainder.isEmpty {
+                    paragraphBuffer = remainder
+                }
+                continue
+            }
+
+            if trimmed.hasPrefix("- ") {
+                flushParagraph()
+                let bulletText = trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces)
+                if !bulletText.isEmpty {
+                    segments.append(.bullet(String(bulletText)))
+                }
+                continue
+            }
+
+            if paragraphBuffer.isEmpty {
+                paragraphBuffer = trimmed
+            } else {
+                paragraphBuffer += " \(trimmed)"
+            }
+        }
+
+        flushParagraph()
+
+        if segments.isEmpty {
+            return [ .paragraph(normalized) ]
+        }
+
+        return segments
     }
 }
 
