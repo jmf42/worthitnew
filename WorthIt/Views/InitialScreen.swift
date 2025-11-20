@@ -75,6 +75,17 @@ struct InitialScreen: View {
                 isGaugeAnimationCompleted = false
             }
         }
+        .onChange(of: viewModel.shouldShowScoreBreakdown) { newValue in
+            if newValue, viewModel.scoreBreakdownDetails != nil {
+                showScoreBreakdownSheet = true
+            }
+            if !newValue {
+                showScoreBreakdownSheet = showScoreBreakdownSheet && viewModel.scoreBreakdownDetails != nil
+            }
+            if newValue {
+                viewModel.consumeScoreBreakdownRequest()
+            }
+        }
     }
 
     @ViewBuilder
@@ -371,6 +382,10 @@ struct ScoreBreakdownCardView: View {
     @Binding var isPresented: Bool
     @State private var animateDepth: Double = 0
     @State private var animateSentiment: Double = 0
+    
+    private var scrollMaxHeight: CGFloat {
+        min(UIScreen.main.bounds.height * 0.65, 520)
+    }
 
     var body: some View {
         ZStack {
@@ -394,112 +409,151 @@ struct ScoreBreakdownCardView: View {
                 .padding(.top, 8)
                 .padding(.horizontal, 12)
 
-                VStack(spacing: 18) {
-                    // Header + score badge
-                    HStack(alignment: .lastTextBaseline) {
-                        Text("Score Breakdown")
-                        .font(Theme.Font.title3.weight(.bold))
-                        .foregroundStyle(Theme.Gradient.appBluePurple)
-                        Spacer()
-                        Text("\(Int(breakdown.finalScore))%")
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 18) {
+                        // Header + score badge
+                        HStack(alignment: .lastTextBaseline) {
+                            Text("Score Breakdown")
                             .font(Theme.Font.title3.weight(.bold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(Theme.Color.sectionBackground.opacity(0.6))
-                                    .overlay(Capsule().stroke(Theme.Color.accent.opacity(0.2), lineWidth: 1))
-                            )
                             .foregroundStyle(Theme.Gradient.appBluePurple)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.95)
-                    }
-                    .padding(.top, 2)
-
-                    // Subtle gradient divider under header for structure
-                    Rectangle()
-                        .fill(Theme.Gradient.appBluePurple.opacity(0.25))
-                        .frame(height: 1)
-                        .cornerRadius(0.5)
-
-                    // Animated progress bars for each score
-                    ScoreBreakdownBar(
-                        label: "Content Depth",
-                        value: breakdown.contentDepthScore,
-                        icon: "doc.text.magnifyingglass",
-                        color: Theme.Color.orange,
-                        animatedValue: $animateDepth
-                    )
-                    
-                    if breakdown.hasComments {
-                        ScoreBreakdownBar(
-                            label: "Comment Sentiment",
-                            value: breakdown.commentSentimentScore,
-                            icon: "hand.thumbsup.circle.fill",
-                            color: Theme.Color.success,
-                            animatedValue: $animateSentiment
-                        )
-                    } else {
-                        HStack {
-                            Image(systemName: "text.bubble.fill")
-                                .foregroundColor(Theme.Color.secondaryText)
-                            Text("No comments available for analysis.")
-                                .font(Theme.Font.subheadline)
-                                .foregroundColor(Theme.Color.secondaryText)
-                        }
-                        .padding(.vertical, 8)
-                    }
-
-                    // (Removed theme chips to ensure consistent look before/after cache)
-
-                    // Clear conclusion phrased as a verdict
-                    let worthItMessage: String = {
-                        if breakdown.finalScore >= 80 {
-                            return "Conclusion: Highly worth your time"
-                        } else if breakdown.finalScore >= 60 {
-                            return "Conclusion: Worth your time"
-                        } else if breakdown.finalScore >= 40 {
-                            return "Conclusion: Borderline — depends on your interest"
-                        } else {
-                            return "Conclusion: Not worth your time"
-                        }
-                    }()
-                    HStack(spacing: 8) {
-                        let iconName: String = {
-                            if breakdown.finalScore >= 80 { return "checkmark.seal.fill" }
-                            if breakdown.finalScore >= 60 { return "hand.thumbsup.fill" }
-                            if breakdown.finalScore >= 40 { return "exclamationmark.triangle.fill" }
-                            return "xmark.octagon.fill"
-                        }()
-                        Image(systemName: iconName)
-                            .foregroundStyle(Theme.Color.secondaryText)
-                        Text(worthItMessage)
-                            .font(Theme.Font.headline)
-                            .foregroundStyle(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                    startPoint: .leading,
-                                    endPoint: .trailing
+                            Spacer()
+                            Text("\(Int(breakdown.finalScore))%")
+                                .font(Theme.Font.title3.weight(.bold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(Theme.Color.sectionBackground.opacity(0.6))
+                                        .overlay(Capsule().stroke(Theme.Color.accent.opacity(0.2), lineWidth: 1))
                                 )
+                                .foregroundStyle(Theme.Gradient.appBluePurple)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.95)
+                        }
+                        .padding(.top, 2)
+
+                        // Subtle gradient divider under header for structure
+                        Rectangle()
+                            .fill(Theme.Gradient.appBluePurple.opacity(0.25))
+                            .frame(height: 1)
+                            .cornerRadius(0.5)
+
+                        // Animated progress bars for each score
+                        ScoreBreakdownBar(
+                            label: "Content Depth",
+                            value: breakdown.contentDepthScore,
+                            icon: "doc.text.magnifyingglass",
+                            color: Theme.Color.orange,
+                            animatedValue: $animateDepth
+                        )
+                        
+                        BreakdownReasonSection(
+                            title: "Why this depth score",
+                            positives: breakdown.contentHighlights,
+                            negatives: breakdown.contentWatchouts,
+                            positiveIcon: "plus.circle.fill",
+                            negativeIcon: "exclamationmark.triangle.fill",
+                            positiveColor: Theme.Color.orange,
+                            negativeColor: Theme.Color.warning,
+                            maxItems: 1
+                        )
+                        
+                        if breakdown.hasComments {
+                            ScoreBreakdownBar(
+                                label: "Comment Sentiment",
+                                value: breakdown.commentSentimentScore,
+                                icon: "hand.thumbsup.circle.fill",
+                                color: Theme.Color.success,
+                                animatedValue: $animateSentiment
                             )
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.9)
+                            
+                            if let spamRatio = breakdown.spamRatio, spamRatio >= 0.4 {
+                                ScoreWarningCapsule(
+                                    text: "Score tempered: \(Int(spamRatio * 100))% of comments look like spam or low-signal.",
+                                    icon: "exclamationmark.triangle.fill"
+                                )
+                            }
+                            
+                            BreakdownReasonSection(
+                                title: "What viewers are saying",
+                                positives: breakdown.commentHighlights,
+                                negatives: breakdown.commentWatchouts,
+                                positiveIcon: "hand.thumbsup.fill",
+                                negativeIcon: "xmark.octagon.fill",
+                                positiveColor: Theme.Color.success,
+                                negativeColor: Theme.Color.error,
+                                maxItems: 1
+                            )
+                            
+                            if let analyzed = breakdown.commentsAnalyzed, analyzed > 0 {
+                                Text("Based on \(analyzed) recent comments")
+                                    .font(Theme.Font.caption)
+                                    .foregroundColor(Theme.Color.secondaryText)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        } else {
+                            HStack {
+                                Image(systemName: "text.bubble.fill")
+                                    .foregroundColor(Theme.Color.secondaryText)
+                                Text("No comments available for analysis.")
+                                    .font(Theme.Font.subheadline)
+                                    .foregroundColor(Theme.Color.secondaryText)
+                            }
+                            .padding(.vertical, 8)
+                        }
+
+                        // (Removed theme chips to ensure consistent look before/after cache)
+
+                        // Clear conclusion phrased as a verdict
+                        let worthItMessage: String = {
+                            if breakdown.finalScore >= 80 {
+                                return "Conclusion: Highly worth your time"
+                            } else if breakdown.finalScore >= 60 {
+                                return "Conclusion: Worth your time"
+                            } else if breakdown.finalScore >= 40 {
+                                return "Conclusion: Borderline — depends on your interest"
+                            } else {
+                                return "Conclusion: Not worth your time"
+                            }
+                        }()
+                        HStack(spacing: 8) {
+                            let iconName: String = {
+                                if breakdown.finalScore >= 80 { return "checkmark.seal.fill" }
+                                if breakdown.finalScore >= 60 { return "hand.thumbsup.fill" }
+                                if breakdown.finalScore >= 40 { return "exclamationmark.triangle.fill" }
+                                return "xmark.octagon.fill"
+                            }()
+                            Image(systemName: iconName)
+                                .foregroundStyle(Theme.Color.secondaryText)
+                            Text(worthItMessage)
+                                .font(Theme.Font.headline)
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.blue, Color.purple]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.9)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Theme.Color.sectionBackground.opacity(0.6))
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(Theme.Color.accent.opacity(0.12), lineWidth: 1)
+                                )
+                        )
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 2)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Theme.Color.sectionBackground.opacity(0.6))
-                            .overlay(
-                                Capsule(style: .continuous)
-                                    .stroke(Theme.Color.accent.opacity(0.12), lineWidth: 1)
-                            )
-                    )
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 2)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 20)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .frame(maxHeight: scrollMaxHeight)
                 .background(
                     // Clean inner card (no inner border) for a subtler look
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -573,6 +627,99 @@ struct ScoreBreakdownBar: View {
             .shadow(color: color.opacity(0.12), radius: 2, y: 1)
         }
         .padding(.vertical, 2)
+    }
+}
+
+struct BreakdownReasonSection: View {
+    let title: String
+    let positives: [String]
+    let negatives: [String]
+    let positiveIcon: String
+    let negativeIcon: String
+    let positiveColor: Color
+    let negativeColor: Color
+    var maxItems: Int = 2
+
+    private var hasContent: Bool {
+        !(positives.isEmpty && negatives.isEmpty)
+    }
+
+    var body: some View {
+        if hasContent {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title.uppercased())
+                    .font(Theme.Font.captionBold)
+                    .foregroundColor(Theme.Color.secondaryText)
+                    .kerning(0.4)
+                VStack(spacing: 8) {
+                    ForEach(positives.prefix(maxItems), id: \.self) { reason in
+                        ReasonRow(icon: positiveIcon, text: reason, color: positiveColor)
+                    }
+                    ForEach(negatives.prefix(maxItems), id: \.self) { reason in
+                        ReasonRow(icon: negativeIcon, text: reason, color: negativeColor)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+        }
+    }
+}
+
+struct ReasonRow: View {
+    let icon: String
+    let text: String
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(color)
+                .padding(6)
+                .background(color.opacity(0.1))
+                .clipShape(Circle())
+            Text(text)
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.Color.primaryText)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.Color.sectionBackground.opacity(0.4))
+        )
+    }
+}
+
+struct ScoreWarningCapsule: View {
+    let text: String
+    let icon: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+            Text(text)
+                .font(Theme.Font.captionBold)
+                .multilineTextAlignment(.leading)
+        }
+        .foregroundColor(Theme.Color.warning)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Theme.Color.sectionBackground.opacity(0.55))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(Theme.Color.warning.opacity(0.25), lineWidth: 0.8)
+                )
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -683,7 +830,23 @@ struct InitialScreen_Previews: PreviewProvider {
             topThemes: []
         )
         viewModel.rawTranscript = "This is a sample transcript..."
-        viewModel.scoreBreakdownDetails = ScoreBreakdown(contentDepthScore: 0.85, commentSentimentScore: 0.92, hasComments: true, contentDepthRaw: 0.87, commentSentimentRaw: 0.55, finalScore: 88, videoTitle: "Preview: The Mind-Blowing Future of AI & Creativity", positiveCommentThemes: ["Incredibly insightful!", "Loved the examples.", "Great production quality."], negativeCommentThemes: ["A bit too long."])
+        viewModel.scoreBreakdownDetails = ScoreBreakdown(
+            contentDepthScore: 0.85,
+            commentSentimentScore: 0.92,
+            hasComments: true,
+            contentDepthRaw: 0.87,
+            commentSentimentRaw: 0.55,
+            finalScore: 88,
+            videoTitle: "Preview: The Mind-Blowing Future of AI & Creativity",
+            positiveCommentThemes: ["Incredibly insightful!", "Loved the examples.", "Great production quality."],
+            negativeCommentThemes: ["A bit too long."],
+            contentHighlights: ["Turns 90 minutes into a tight 3-step creativity workout.", "Names concrete AI tools plus usage guardrails."],
+            contentWatchouts: ["Skips hardware requirements and pricing details."],
+            commentHighlights: ["42% rave about the live prompt demos.", "Viewers say it finally shows practical workflows."],
+            commentWatchouts: ["Some think the sponsor plug drags on."],
+            spamRatio: 0.08,
+            commentsAnalyzed: 42
+        )
 
         return InitialScreen()
             .environmentObject(viewModel)

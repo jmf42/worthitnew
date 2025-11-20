@@ -48,6 +48,7 @@ struct Theme {
         static let caption     = SwiftUI.Font.system(size: 13, weight: .regular, design: .rounded)
         static let captionBold = SwiftUI.Font.system(size: 13, weight: .bold,    design: .rounded)
         static let captionItalic = SwiftUI.Font.system(size: 13, weight: .regular, design: .rounded).italic()
+        static let caption2    = SwiftUI.Font.system(size: 12, weight: .regular, design: .rounded)
 
         static let toolbarTitle = SwiftUI.Font.system(size: 20, weight: .bold, design: .rounded)
 

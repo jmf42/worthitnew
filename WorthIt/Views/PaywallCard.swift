@@ -1,6 +1,7 @@
 import SwiftUI
 import StoreKit
 import Foundation
+import Combine
 
 struct PaywallCard: View {
     @EnvironmentObject private var viewModel: MainViewModel
@@ -16,38 +17,76 @@ struct PaywallCard: View {
     @State private var infoMessage: String?
     @State private var infoMessageColor: Color = Theme.Color.secondaryText
     @State private var showLoadingSkeleton = true
+    @State private var extensionLaunchState: ShareExtensionLaunchState = .idle
 
     private var productsStillLoading: Bool {
-        let expected = Set(AppConstants.subscriptionProductIDs)
-        let loaded = Set(subscriptionManager.products.map(\.id))
-        return !expected.isSubset(of: loaded)
+        !isInExtension && subscriptionManager.isLoadingProducts && subscriptionManager.products.isEmpty
+    }
+
+    private var annualProduct: Product? {
+        subscriptionManager.products.first { $0.id == AppConstants.subscriptionProductAnnualID }
+    }
+
+    private var weeklyProduct: Product? {
+        subscriptionManager.products.first { $0.id == AppConstants.subscriptionProductWeeklyID }
+    }
+
+    private var annualSavingsPercent: Int? {
+        guard
+            let annual = annualProduct,
+            let weekly = weeklyProduct
+        else {
+            return nil
+        }
+
+        let annualPrice = NSDecimalNumber(decimal: annual.price).doubleValue
+        let weeklyPrice = NSDecimalNumber(decimal: weekly.price).doubleValue
+        guard annualPrice > 0, weeklyPrice > 0 else {
+            return nil
+        }
+
+        let annualIfWeekly = weeklyPrice * 52
+        guard annualIfWeekly > 0 else {
+            return nil
+        }
+
+        let savingsRatio = 1 - (annualPrice / annualIfWeekly)
+        let percentage = Int((savingsRatio * 100).rounded())
+        return percentage > 0 ? percentage : nil
+    }
+
+    private var annualBadgeText: String? {
+        guard let percent = annualSavingsPercent else { return nil }
+        return "\(percent)% OFF"
     }
 
     private var plans: [PaywallPlanOption] {
-        let products = subscriptionManager.products
-        let annual = products.first { $0.id == AppConstants.subscriptionProductAnnualID }
-        let monthly = products.first { $0.id == AppConstants.subscriptionProductMonthlyID }
+        let annual = annualProduct
+        let weekly = weeklyProduct
 
-        return [
+        let options: [PaywallPlanOption] = [
             PaywallPlanOption(
                 id: AppConstants.subscriptionProductAnnualID,
                 title: "Annual",
                 priceText: annual?.displayPrice ?? "Loading…",
                 detailText: "Best value • Billed yearly",
-                badge: "Popular",
+                trailingBadge: annualBadgeText,
                 product: annual,
-                isRecommended: true
+                isRecommended: true,
+                footnote: nil
             ),
             PaywallPlanOption(
-                id: AppConstants.subscriptionProductMonthlyID,
-                title: "Monthly",
-                priceText: monthly?.displayPrice ?? "Loading…",
+                id: AppConstants.subscriptionProductWeeklyID,
+                title: "Weekly",
+                priceText: weekly?.displayPrice ?? "Loading…",
                 detailText: "Cancel anytime",
-                badge: nil,
-                product: monthly,
-                isRecommended: false
+                trailingBadge: nil,
+                product: weekly,
+                isRecommended: false,
+                footnote: "Stay flexible. Cancel anytime."
             )
         ]
+        return options
     }
 
     private var selectedPlan: PaywallPlanOption? {
@@ -57,9 +96,25 @@ struct PaywallCard: View {
         return plans.first
     }
 
-    private var usageProgress: Double {
-        guard context.usageSnapshot.limit > 0 else { return 1 }
-        return min(1, Double(context.usageSnapshot.count) / Double(context.usageSnapshot.limit))
+    private var productAvailabilityMessage: String? {
+        guard subscriptionManager.hasAttemptedProductLoad, !subscriptionManager.isLoadingProducts else {
+            return nil
+        }
+
+        if subscriptionManager.lastProductLoadError != nil {
+            return "We couldn't load the plans right now. Please try again later."
+        }
+
+        if subscriptionManager.products.isEmpty {
+            return "We couldn't load the subscription plans right now. Please try again shortly."
+        }
+
+        let expected = Set(AppConstants.subscriptionProductIDs)
+        let loaded = Set(subscriptionManager.products.map { $0.id })
+        let missing = expected.subtracting(loaded)
+        guard !missing.isEmpty else { return nil }
+
+        return "Some subscription options are temporarily unavailable. You can still subscribe to any plans shown below."
     }
 
     private var maxCardWidth: CGFloat { isInExtension ? 320 : 340 }
@@ -67,24 +122,15 @@ struct PaywallCard: View {
     var body: some View {
         VStack(spacing: isInExtension ? 16 : 18) {
             header
-            premiumSummary
+            momentumSection
+            usageSummary
+
             premiumBenefits
 
             if isInExtension {
                 shareExtensionActions
             } else {
-                planSelector
-
-                if let message = infoMessage {
-                    Text(message)
-                        .font(Theme.Font.caption)
-                        .foregroundColor(infoMessageColor)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 2)
-                }
-
-                mainAppActions
-                legalLinks
+                mainExperienceStack
             }
         }
         .frame(maxWidth: maxCardWidth)
@@ -112,10 +158,11 @@ struct PaywallCard: View {
         .onAppear {
             if isInExtension {
                 infoMessage = nil
+                triggerExtensionAutoLaunchIfNeeded()
             } else if selectedPlanID == nil, let defaultPlan = plans.first?.id {
                 selectedPlanID = defaultPlan
             }
-            showLoadingSkeleton = !isInExtension && productsStillLoading
+            showLoadingSkeleton = productsStillLoading || (!isInExtension && subscriptionManager.products.isEmpty)
             viewModel.paywallPresented(reason: context.reason)
             Task {
                 await subscriptionManager.refreshProducts()
@@ -131,11 +178,23 @@ struct PaywallCard: View {
                 showLoadingSkeleton = productsStillLoading
             }
         }
+        .onChange(of: subscriptionManager.isLoadingProducts) { _ in
+            guard !isInExtension else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                showLoadingSkeleton = productsStillLoading
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .shareExtensionOpenMainAppFailed)) { _ in
+            guard isInExtension else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                extensionLaunchState = .failed
+            }
+        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Image("AppLogo")
                     .resizable()
                     .scaledToFit()
@@ -154,137 +213,111 @@ struct PaywallCard: View {
 
                 Spacer()
             }
-
-            usageSummary
         }
+    }
+
+    private var momentumSection: some View {
+        let metrics = context.metrics
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Momentum snapshot")
+                .font(Theme.Font.captionBold)
+                .foregroundColor(Theme.Color.secondaryText)
+
+            HStack(spacing: 10) {
+                momentumTile(title: "Minutes saved", value: formattedMinutes(metrics.totalMinutesSaved))
+                momentumTile(title: "Day streak", value: "\(metrics.activeStreakDays)")
+            }
+        }
+        .padding(12)
+        .background(cardFill(opacity: 0.65, cornerRadius: 20))
+        .overlay(cardStroke(cornerRadius: 20))
+    }
+
+    private func momentumTile(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.Color.secondaryText)
+            Text(value)
+                .font(Theme.Font.title3.weight(.semibold))
+                .foregroundColor(Theme.Color.primaryText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(cardFill(opacity: 0.38, cornerRadius: 14))
+        .overlay(cardStroke(cornerRadius: 14))
+    }
+
+    private func formattedMinutes(_ minutes: Double) -> String {
+        if minutes >= 60 {
+            let hours = minutes / 60.0
+            return hours >= 10 ? String(format: "%.0f hr", hours) : String(format: "%.1f hr", hours)
+        }
+        return String(format: "%.0f min", minutes)
     }
 
     private var usageSummary: some View {
-        Group {
-            if isInExtension {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Label("Today’s free limit", systemImage: "clock")
-                            .labelStyle(.titleAndIcon)
-                            .font(Theme.Font.captionBold)
-                            .foregroundColor(Theme.Color.primaryText)
+        let snapshot = context.usageSnapshot
+        let dailyLimit = max(snapshot.limit, AppConstants.dailyFreeAnalysisLimit)
+        let used = min(snapshot.count, dailyLimit)
+        let remaining = max(0, dailyLimit - used)
 
-                        Spacer()
-
-                        Text("\(context.usageSnapshot.count)/\(context.usageSnapshot.limit)")
-                            .font(Theme.Font.captionBold)
-                            .foregroundColor(Theme.Color.primaryText)
-                    }
-
-                    ProgressView(value: usageProgress)
-                        .tint(Theme.Color.accent)
-
-                    Text("Reset tomorrow at midnight.")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Theme.Color.sectionBackground.opacity(0.42))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.white.opacity(0.1), lineWidth: 0.7)
-                        )
-                )
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Today’s free limit")
-                            .font(Theme.Font.captionBold)
-                            .foregroundColor(Theme.Color.secondaryText)
-
-                        Spacer()
-
-                        Text("\(context.usageSnapshot.count) of \(context.usageSnapshot.limit) used")
-                            .font(Theme.Font.captionBold)
-                            .foregroundColor(Theme.Color.primaryText)
-                    }
-
-                    ProgressView(value: usageProgress)
-                        .progressViewStyle(LinearProgressViewStyle(tint: Theme.Color.accent))
-
-                    Text("Reset tomorrow at midnight.")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
-                }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Theme.Color.sectionBackground.opacity(0.45))
-                        .background(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(Color.white.opacity(0.05))
-                                .blur(radius: 6)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
-                        )
-                )
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var premiumSummary: some View {
-        if isInExtension {
-            EmptyView()
-        } else {
-            let reportedLimit = context.usageSnapshot.limit
-            let dailyLimit = reportedLimit > 0 ? reportedLimit : AppConstants.dailyFreeAnalysisLimit
-            let used = context.usageSnapshot.count
-            let remaining = max(dailyLimit - used, 0)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Today: \(used)/\(dailyLimit) free breakdowns used")
-                    .font(Theme.Font.subheadlineBold)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Free plan • \(dailyLimit) analyses/day")
+                    .font(Theme.Font.captionBold)
+                    .foregroundColor(Theme.Color.secondaryText)
+                Spacer()
+                Text("\(remaining) left today")
+                    .font(Theme.Font.captionBold)
                     .foregroundColor(Theme.Color.primaryText)
+            }
 
-                Text(
-                    remaining == 0
-                    ? "Come back tomorrow for another \(dailyLimit) free videos, or upgrade to keep going now."
-                    : "You can analyze \(remaining) more video\(remaining == 1 ? "" : "s") today for free, or go unlimited with Premium."
-                )
+            ProgressView(value: Double(used), total: Double(dailyLimit))
+                .progressViewStyle(LinearProgressViewStyle(tint: Theme.Color.accent))
+
+            Text("Premium removes the cap so you never wait for tomorrow.")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.Color.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
+
         }
+        .padding(isInExtension ? 12 : 14)
+        .background(cardFill(cornerRadius: isInExtension ? 16 : 18))
+        .overlay(cardStroke(cornerRadius: isInExtension ? 16 : 18))
     }
 
     private var premiumBenefits: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("WorthIt Premium unlocks")
-                .font(Theme.Font.subheadlineBold)
-                .foregroundColor(Theme.Color.primaryText)
-
-            VStack(alignment: .leading, spacing: 8) {
-                benefitRow(icon: "infinity", text: "Unlimited video breakdowns without the wait")
-                benefitRow(icon: "bolt.fill", text: "Faster analysis with priority processing")
-                benefitRow(icon: "sparkles", text: "Full Worth-It Score, insights, and Q&A on every video")
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "infinity")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(Theme.Color.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("WorthIt Premium")
+                    .font(Theme.Font.subheadlineBold)
+                    .foregroundColor(Theme.Color.primaryText)
+                Text("Unlimited breakdowns. Zero waiting for tomorrow.")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.Color.secondaryText)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
     }
 
-    private func benefitRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(Theme.Color.accent)
-                .frame(width: 18)
-
-            Text(text)
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.Color.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+    @ViewBuilder
+    private var mainExperienceStack: some View {
+        VStack(spacing: 18) {
+            planSelector
+            if let message = infoMessage {
+                Text(message)
+                    .font(Theme.Font.caption)
+                    .foregroundColor(infoMessageColor)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 2)
+            }
+            mainAppActions
+            legalLinks
         }
     }
 
@@ -303,6 +336,13 @@ struct PaywallCard: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(plan.product == nil)
+                }
+                if let message = productAvailabilityMessage {
+                    Text(message)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.Color.secondaryText)
+                        .multilineTextAlignment(.leading)
+                        .padding(.top, 6)
                 }
             }
         }
@@ -325,41 +365,58 @@ struct PaywallCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 16)
                 .padding(.horizontal, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Theme.Color.sectionBackground.opacity(0.46))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-                        )
-                )
+                .background(cardFill(opacity: 0.46, cornerRadius: 18))
+                .overlay(cardStroke(cornerRadius: 18))
                 .redacted(reason: .placeholder)
             }
         }
         .animation(.easeInOut(duration: 0.25), value: showLoadingSkeleton)
     }
 
+    @ViewBuilder
+    private var selectedPlanSummary: some View {
+        if let plan = selectedPlan {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Selected plan")
+                    .font(Theme.Font.captionBold)
+                    .foregroundColor(Theme.Color.secondaryText)
+                Text("\(plan.title) • \(plan.priceText)")
+                    .font(Theme.Font.subheadline.weight(.semibold))
+                    .foregroundColor(Theme.Color.primaryText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private func planSummaryContent(plan: PaywallPlanOption, showSelection: Bool) -> some View {
-        let verticalPadding: CGFloat = showSelection ? 14 : 12
-        let horizontalPadding: CGFloat = showSelection ? 16 : 14
         let isSelected = selectedPlan?.id == plan.id
         let priceLoaded = plan.product != nil
+        let strokeStyle: AnyShapeStyle = isSelected
+            ? AnyShapeStyle(Theme.Gradient.appBluePurple)
+            : AnyShapeStyle(Color.white.opacity(0.1))
 
-        let base = HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(plan.title)
-                        .font(Theme.Font.subheadline.weight(.semibold))
-                        .foregroundColor(Theme.Color.primaryText)
-
-                    if showSelection, let badge = plan.badge, plan.isRecommended {
-                        Text(badge.uppercased())
+        return HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if plan.isRecommended {
+                            Text("POPULAR")
+                                .font(Theme.Font.captionBold)
+                                .foregroundColor(Theme.Color.accent)
+                                .textCase(.uppercase)
+                        }
+                        Text(plan.title)
+                            .font(Theme.Font.subheadline.weight(.semibold))
+                            .foregroundColor(Theme.Color.primaryText)
+                    }
+                    Spacer()
+                    if let trailing = plan.trailingBadge {
+                        Text(trailing)
                             .font(Theme.Font.captionBold)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Theme.Color.accent.opacity(0.22))
                             .foregroundColor(Theme.Color.accent)
-                            .clipShape(Capsule())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Theme.Color.accent.opacity(0.18)))
                     }
                 }
 
@@ -369,9 +426,14 @@ struct PaywallCard: View {
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-            }
 
-            Spacer(minLength: 14)
+                if let footnote = plan.footnote {
+                    Text(footnote)
+                        .font(Theme.Font.caption2)
+                        .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             if showSelection {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
@@ -379,34 +441,33 @@ struct PaywallCard: View {
                     .foregroundColor(isSelected ? Theme.Color.accent : Theme.Color.secondaryText.opacity(0.5))
             }
         }
-        .padding(.vertical, verticalPadding)
-        .padding(.horizontal, horizontalPadding)
-
-        return base
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Theme.Color.sectionBackground.opacity(showSelection && isSelected ? 0.6 : 0.46))
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color.white.opacity(0.05))
-                            .blur(radius: 6)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(showSelection && isSelected ? Theme.Color.accent.opacity(0.45) : Theme.Color.sectionBackground.opacity(0.25), lineWidth: 0.9)
-                            .blendMode(.overlay)
-                    )
+        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .background(cardFill(opacity: isSelected ? 0.6 : 0.42, cornerRadius: 18))
+        .overlay(
+            cardStroke(
+                strokeStyle,
+                lineWidth: isSelected ? 1.6 : 0.7,
+                cornerRadius: 18
             )
+        )
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Theme.Color.accent.opacity(0.45), lineWidth: 0.5)
+                    .blendMode(.screen)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 
     private func priceLabel(for plan: PaywallPlanOption, loaded: Bool) -> some View {
         Group {
             if loaded {
                 Text(plan.priceText)
+            } else if plan.product == nil, plan.priceText.lowercased() != "loading…" {
+                Text(plan.priceText)
+                    .foregroundColor(Theme.Color.secondaryText)
             } else {
                 Text(plan.placeholderPrice)
                     .redacted(reason: .placeholder)
@@ -443,7 +504,7 @@ struct PaywallCard: View {
             if showLoadingSkeleton {
                 primaryButtonSkeleton
             } else {
-                Button(action: attemptPurchase) {
+                Button(action: { attemptPurchase(source: .primary) }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .fill(Theme.Gradient.appBluePurple)
@@ -467,6 +528,8 @@ struct PaywallCard: View {
                 .disabled(purchaseInFlight != nil || selectedPlan?.product == nil)
                 .animation(.easeInOut(duration: 0.2), value: purchaseInFlight)
             }
+
+            selectedPlanSummary
 
             Button(action: dismissTapped) {
                 Text("Maybe later")
@@ -533,18 +596,19 @@ struct PaywallCard: View {
 
     private var shareExtensionActions: some View {
         VStack(spacing: 18) {
-            Text("Open WorthIt to finish upgrading to Premium.")
-                .font(Theme.Font.subheadlineBold)
-                .foregroundColor(Theme.Color.primaryText)
-                .multilineTextAlignment(.center)
+            shareExtensionStatusRow
+            Button(action: manuallyOpenWorthIt) {
+                HStack(spacing: 10) {
+                    if extensionLaunchState == .launching {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    }
+                    Text(extensionLaunchState == .failed ? "Try opening WorthIt again" : "Open WorthIt")
+                        .font(Theme.Font.body.weight(.semibold))
+                        .foregroundColor(.white)
+                }
                 .frame(maxWidth: .infinity)
-
-            Button(action: openWorthItFromExtension) {
-                Text("Open WorthIt")
-                    .font(Theme.Font.body.weight(.semibold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                .padding(.vertical, 14)
             }
             .buttonStyle(.plain)
             .background(
@@ -556,6 +620,8 @@ struct PaywallCard: View {
                             .blendMode(.screen)
                     )
             )
+            .disabled(extensionLaunchState == .launching)
+            .opacity(extensionLaunchState == .launching ? 0.65 : 1.0)
 
             Button(action: dismissTapped) {
                 Text("Close share sheet")
@@ -566,6 +632,42 @@ struct PaywallCard: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    private func shareExtensionStatusText() -> (text: String, color: Color) {
+        switch extensionLaunchState {
+        case .launching:
+            return ("Opening WorthIt…", Theme.Color.primaryText)
+        case .failed:
+            return ("Couldn't open automatically. Tap below or try again.", Theme.Color.warning)
+        case .idle:
+            return ("Open WorthIt to finish upgrading to Premium.", Theme.Color.primaryText)
+        }
+    }
+
+    @ViewBuilder
+    private var shareExtensionStatusRow: some View {
+        let status = shareExtensionStatusText()
+        HStack(spacing: 12) {
+            if extensionLaunchState == .launching {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: Theme.Color.accent))
+            } else {
+                Image(systemName: extensionLaunchState == .failed ? "exclamationmark.triangle.fill" : "sparkles")
+                    .foregroundColor(extensionLaunchState == .failed ? Theme.Color.warning : Theme.Color.accent)
+            }
+            Text(status.text)
+                .font(Theme.Font.subheadlineBold)
+                .foregroundColor(status.color)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func manuallyOpenWorthIt() {
+        guard extensionLaunchState != .launching else { return }
+        extensionLaunchState = .launching
+        openWorthItFromExtension()
     }
 
     private func openWorthItFromExtension() {
@@ -580,9 +682,10 @@ struct PaywallCard: View {
         selectedPlanID = plan.id
         infoMessage = nil
         infoMessageColor = Theme.Color.secondaryText
+        viewModel.paywallPlanSelected(productId: plan.id)
     }
 
-    private func attemptPurchase() {
+    private func attemptPurchase(source: PurchaseSource = .primary) {
         guard let plan = selectedPlan else {
             infoMessage = "Select a plan to continue."
             infoMessageColor = Theme.Color.warning
@@ -598,6 +701,7 @@ struct PaywallCard: View {
         purchaseInFlight = plan.id
         infoMessage = nil
         infoMessageColor = Theme.Color.secondaryText
+        viewModel.paywallCheckoutStarted(productId: plan.id, source: source.analyticsValue, isTrial: false)
         viewModel.paywallPurchaseTapped(productId: plan.id)
 
         Task { @MainActor in
@@ -643,10 +747,45 @@ struct PaywallCard: View {
     }
 
     private func dismissTapped() {
+        viewModel.paywallMaybeLaterTapped()
+        dismissPaywallAfterRescue()
+    }
+
+    private func dismissPaywallAfterRescue() {
         viewModel.dismissPaywall()
         if isInExtension {
             NotificationCenter.default.post(name: .shareExtensionShouldDismissGlobal, object: nil)
         }
+    }
+
+    private func cardFill(opacity: Double = 0.45, cornerRadius: CGFloat = 18) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Theme.Color.sectionBackground.opacity(opacity))
+    }
+
+    private func cardStroke<S: ShapeStyle>(_ style: S = Color.white.opacity(0.14), lineWidth: CGFloat = 0.8, cornerRadius: CGFloat = 18) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .stroke(style, lineWidth: lineWidth)
+    }
+
+    private func triggerExtensionAutoLaunchIfNeeded() {
+        guard isInExtension, extensionLaunchState == .idle else { return }
+        extensionLaunchState = .launching
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            openWorthItFromExtension()
+        }
+    }
+
+    private enum PurchaseSource {
+        case primary
+
+        var analyticsValue: String { "primary_cta" }
+    }
+
+    private enum ShareExtensionLaunchState {
+        case idle
+        case launching
+        case failed
     }
 }
 
@@ -655,14 +794,15 @@ struct PaywallPlanOption: Identifiable, Equatable {
     let title: String
     let priceText: String
     let detailText: String
-    let badge: String?
+    let trailingBadge: String?
     let product: Product?
     let isRecommended: Bool
+    let footnote: String?
 
     var placeholderPrice: String {
         switch id {
-        case AppConstants.subscriptionProductMonthlyID:
-            return "$9.99 / month"
+        case AppConstants.subscriptionProductWeeklyID:
+            return "$2.99 / week"
         case AppConstants.subscriptionProductAnnualID:
             return "$99.99 / year"
         default:

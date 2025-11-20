@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>API_PROXY_BASE_URL</key>
-	<string>http://localhost:8080</string>
+	<string>https://worthit-1023767329330.europe-west1.run.app/</string>
 	<key>CFBundleDisplayName</key>
 	<string>WorthIt</string>
 	<key>CFBundleExecutable</key>

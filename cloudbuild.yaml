@@ -1,0 +1,33 @@
+substitutions:
+  _IMAGE: "europe-west1-docker.pkg.dev/$PROJECT_ID/worthit-repo/worthit:$COMMIT_SHA"
+
+steps:
+  # Construir imagen usando Dockerfile
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -t
+      - ${_IMAGE}
+      - .
+
+  # Push imagen al registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - ${_IMAGE}
+
+  # Deploy a Cloud Run con esa imagen
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - worthit
+      - --image=${_IMAGE}
+      - --region=europe-west1
+      - --allow-unauthenticated
+      - --project=$PROJECT_ID
+      - --timeout=120
+
+images:
+  - ${_IMAGE}

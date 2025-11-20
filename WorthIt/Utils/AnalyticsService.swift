@@ -33,6 +33,9 @@ class AnalyticsService {
         case paywallRestoreTapped = "paywall_restore_tapped"
         case paywallManageTapped = "paywall_manage_tapped"
         case paywallDeepLink = "paywall_deeplink"
+        case paywallPlanSelected = "paywall_plan_selected"
+        case paywallCheckoutStarted = "paywall_checkout_started"
+        case paywallMaybeLater = "paywall_maybe_later"
     }
     
     // User properties
@@ -222,5 +225,24 @@ class AnalyticsService {
 
     func logPaywallDeepLinkOpened() {
         logEvent(.paywallDeepLink)
+    }
+
+    func logPaywallPlanSelected(productId: String) {
+        logEvent(.paywallPlanSelected, parameters: ["product_id": productId])
+    }
+
+    func logPaywallCheckoutStarted(productId: String, source: String, isTrial: Bool) {
+        logEvent(.paywallCheckoutStarted, parameters: [
+            "product_id": productId,
+            "source": source,
+            "is_trial": isTrial
+        ])
+    }
+
+    func logPaywallMaybeLater(trialEligible: Bool, trialViewPresented: Bool) {
+        logEvent(.paywallMaybeLater, parameters: [
+            "trial_eligible": trialEligible,
+            "trial_view_presented": trialViewPresented
+        ])
     }
 }

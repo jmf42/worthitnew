@@ -50,6 +50,10 @@ final class SubscriptionManager: ObservableObject {
         }
     }
 
+    @Published private(set) var hasAttemptedProductLoad = false
+    @Published private(set) var isLoadingProducts = false
+    @Published private(set) var lastProductLoadError: Error? = nil
+
     private let defaults: UserDefaults
     private let entitlementKey = "subscription_manager_entitlement_v1"
     private var updatesTask: Task<Void, Never>?
@@ -94,6 +98,10 @@ final class SubscriptionManager: ObservableObject {
     }
 
     func refreshProducts() async {
+        isLoadingProducts = true
+        hasAttemptedProductLoad = true
+        lastProductLoadError = nil
+        defer { isLoadingProducts = false }
         do {
             let fetched = try await Product.products(for: AppConstants.subscriptionProductIDs)
             let order = AppConstants.subscriptionProductIDs
@@ -107,7 +115,9 @@ final class SubscriptionManager: ObservableObject {
             }
             products = ordered
         } catch {
+            lastProductLoadError = error
             Logger.shared.error("Failed to fetch StoreKit products: \(error.localizedDescription)", category: .purchase, error: error)
+            products = []
         }
     }
 

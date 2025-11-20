@@ -215,10 +215,11 @@ final class ShareHostingController: SLComposeServiceViewController {
             self.extensionContext?.open(url) { success in
                 if success {
                     Logger.shared.info("Successfully handed off to WorthIt app for subscription.", category: .shareExtension)
+                    finish()
                 } else {
                     Logger.shared.error("Failed to open WorthIt app via deep link from share extension.", category: .shareExtension)
+                    NotificationCenter.default.post(name: .shareExtensionOpenMainAppFailed, object: nil)
                 }
-                finish()
             }
         }
     }

@@ -5,7 +5,6 @@
 
 import SwiftUI
 import UIKit // For ceustomizing UINavigationBarAppearance
-import LinkPresentation
 import UniformTypeIdentifiers
 import StoreKit
 import Combine
@@ -22,9 +21,11 @@ struct RootView: View {
     @State private var showRecentSheet = false
     @State private var showShareExplanation = false // New state variable
     @AppStorage("hasOnboarded") var hasOnboarded: Bool = false // New AppStorage for onboarding
+    private let onboardingDemoVideoURL = URL(string: "https://www.youtube.com/watch?v=5MgBikgcWnY")!
     @AppStorage("subscribe_banner_dismissed") private var subscribeBannerDismissed = false
     @State private var timeSavedDismissWorkItem: DispatchWorkItem?
     @State private var timeSavedDisplayDuration: Double = 0
+    @State private var showDecisionCard: Bool = false
 
     init() {
         let appearance = UINavigationBarAppearance()
@@ -46,18 +47,8 @@ struct RootView: View {
     }
 
     // MARK: - Paste & Analyze state
-    @State private var inputURLText: String = ""
-    @State private var inputError: String? = nil
+    @StateObject private var startOptionsViewModel = StartOptionsViewModel()
     @FocusState private var isPasteFieldFocused: Bool
-    @State private var isURLValid: Bool = false
-    @State private var validationHint: String? = nil
-    @State private var previewData: TinyPreviewData? = nil
-    @State private var previewTask: Task<Void, Never>? = nil
-    @State private var showHowItWorksDetails: Bool = false
-
-    // Unified control sizing and animated CTA border
-    private let controlHeight: CGFloat = 44
-    @State private var ctaPulse: Bool = false
     
     // Wider, responsive content width: near edge on phones, capped on tablets
     private var mainContentMaxWidth: CGFloat { min(UIScreen.main.bounds.width - 24, 560) }
@@ -68,13 +59,6 @@ struct RootView: View {
     private func dismissKeyboard() {
         // Keep it extension‑safe: rely on FocusState to resign first responder
         isPasteFieldFocused = false
-    }
-
-    private func isValidVideoId(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count == 11 else { return false }
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-        return trimmed.rangeOfCharacter(from: allowed.inverted) == nil
     }
 
     // Show Share button on RootView as soon as gauge/buttons are interactive
@@ -121,47 +105,46 @@ struct RootView: View {
         }
     }
 
-    private func resolveVideoURL(from input: String) -> URL? {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let urlFromText = URLParser.firstSupportedVideoURL(in: trimmed) {
-            return urlFromText
-        }
-        if isValidVideoId(trimmed) {
-            return URL(string: "https://www.youtube.com/watch?v=\(trimmed)")
-        }
-        return nil
-    }
+    @ViewBuilder
+    private var decisionCardOverlay: some View {
+        if showDecisionCard,
+           let card = viewModel.decisionCardModel,
+           viewModel.activePaywall == nil,
+           viewModel.viewState == .showingInitialOptions {
+            ZStack {
+                Color.black.opacity(0.55)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                            showDecisionCard = false
+                        }
+                    }
 
-    private var isAnalyzeEnabled: Bool {
-        resolveVideoURL(from: inputURLText) != nil && viewModel.viewState != .processing
-    }
-
-    private func analyzePastedInput() {
-        // Avoid starting a new analysis while one is in progress
-        guard viewModel.viewState != .processing else { return }
-        guard let url = resolveVideoURL(from: inputURLText) else {
-            inputError = "Please paste a valid YouTube link or 11‑character video ID."
-            return
-        }
-        inputError = nil
-        isPasteFieldFocused = false
-        Logger.shared.info("Manual analyze triggered from main app UI: \(url.absoluteString)", category: .ui)
-        AnalyticsService.shared.logEvent("manual_paste_analyze", parameters: ["source": "main_app", "url": url.absoluteString])
-        viewModel.processSharedURL(url)
-    }
-
-    private func handlePastedText(_ raw: String) {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URLParser.firstSupportedVideoURL(in: trimmed) ?? (
-            isValidVideoId(trimmed) ? URL(string: "https://www.youtube.com/watch?v=\(trimmed)") : nil
-        ) {
-            inputURLText = url.absoluteString
-            inputError = nil
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            analyzePastedInput()
-        } else {
-            // Not a valid YouTube link or ID — focus field for manual edit
-            isPasteFieldFocused = true
+                DecisionCardView(
+                    model: card,
+                    onPrimaryAction: {
+                        openBestPart(for: card)
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                            showDecisionCard = false
+                        }
+                    },
+                    onSecondaryAction: {
+                        viewModel.requestScoreBreakdownPresentation()
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                            showDecisionCard = false
+                        }
+                    },
+                    onClose: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                            showDecisionCard = false
+                        }
+                    }
+                )
+                .frame(maxWidth: 540)
+                .padding(.horizontal, 20)
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .zIndex(1200)
         }
     }
 
@@ -173,8 +156,15 @@ struct RootView: View {
                 if hasOnboarded || isRunningInExtension {
                     mainNavigationView
                 } else {
-                    OnboardingView(hasOnboarded: $hasOnboarded)
-                        .transition(.opacity)
+                    OnboardingView(
+                        callbacks: OnboardingCallbacks(
+                            onSkip: handleOnboardingSkip,
+                            onFocusPaste: handleOnboardingFocusPaste,
+                            onShareSetup: handleOnboardingShareSetup,
+                            onDemoPlayback: handleOnboardingDemoPlayback
+                        )
+                    )
+                    .transition(.opacity)
                 }
             }
 
@@ -187,6 +177,29 @@ struct RootView: View {
         }
     }
 
+    private func handleOnboardingSkip() {
+        hasOnboarded = true
+    }
+
+    private func handleOnboardingFocusPaste() {
+        hasOnboarded = true
+        DispatchQueue.main.async {
+            isPasteFieldFocused = true
+        }
+    }
+
+    private func handleOnboardingShareSetup() {
+        hasOnboarded = true
+        DispatchQueue.main.async {
+            showShareExplanation = true
+        }
+    }
+
+    private func handleOnboardingDemoPlayback() {
+        hasOnboarded = true
+        viewModel.processSharedURL(onboardingDemoVideoURL)
+    }
+
     private var mainNavigationView: some View {
         NavigationView {
             ZStack {
@@ -195,6 +208,7 @@ struct RootView: View {
                 errorOverlay
                 recentModal
                 shareOverlay
+                decisionCardOverlay
                 paywallOverlay
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -224,6 +238,25 @@ struct RootView: View {
         }
         .onChange(of: viewModel.latestTimeSavedEvent?.id) { _ in
             scheduleTimeSavedToastDismissal()
+        }
+        .onChange(of: viewModel.shouldPromptDecisionCard) { prompt in
+            guard prompt,
+                  viewModel.decisionCardModel != nil,
+                  viewModel.viewState == .showingInitialOptions,
+                  !isRunningInExtension else { return }
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                showDecisionCard = true
+            }
+            viewModel.consumeDecisionCardPrompt()
+        }
+        .onChange(of: viewModel.viewState) { newValue in
+            if newValue == .processing { showDecisionCard = false }
+        }
+        .onReceive(viewModel.$activePaywall) { paywall in
+            if paywall != nil { showDecisionCard = false }
+        }
+        .onChange(of: viewModel.decisionCardModel == nil) { isNil in
+            if isNil { showDecisionCard = false }
         }
         .onDisappear {
             timeSavedDismissWorkItem?.cancel()
@@ -309,7 +342,7 @@ struct RootView: View {
     @ViewBuilder
     private var paywallOverlay: some View {
         if let paywallContext = viewModel.activePaywall {
-            InlinePaywallView(context: paywallContext, isInExtension: isRunningInExtension)
+            PaywallView(context: paywallContext, isInExtension: isRunningInExtension)
                 .environmentObject(subscriptionManager)
                 .environmentObject(viewModel)
                 .transition(.opacity)
@@ -519,45 +552,13 @@ struct RootView: View {
     @ViewBuilder
     private func howItWorksBox() -> some View {
         standardBox {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(Theme.Color.accent)
-                Text("Start here")
-                    .font(Theme.Font.title3.weight(.bold))
-                    .foregroundColor(Theme.Color.primaryText)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // Primary actions reordered: Paste first, then Share (per request)
-            if !isRunningInExtension {
-                pasteAnalyzeSection(borderGradient: standardBorderGradient)
-            }
-            // Centered "or" separator between Paste and Share
-            HStack {
-                Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
-                Text("or")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Color.secondaryText)
-                Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
-            }
-            .padding(.vertical, 6)
-            sharePill(borderGradient: standardBorderGradient)
-
-            // Progressive disclosure placed below Share
-            DisclosureGroup(isExpanded: $showHowItWorksDetails) {
-                howItWorksSection(includeHeader: false)
-                    .padding(.top, 6)
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "list.bullet")
-                        .foregroundColor(Theme.Color.accent)
-                    Text("See how")
-                        .font(Theme.Font.subheadline)
-                        .foregroundColor(Theme.Color.secondaryText.opacity(0.92))
-                    Spacer()
-                }
-            }
-            .tint(Theme.Color.secondaryText.opacity(0.88))
+            StartOptionsView(
+                viewModel: startOptionsViewModel,
+                borderGradient: standardBorderGradient,
+                isRunningInExtension: isRunningInExtension,
+                pasteFieldFocus: $isPasteFieldFocused,
+                dismissKeyboard: dismissKeyboard
+            )
         }
     }
 
@@ -667,306 +668,21 @@ struct RootView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + displayDelay, execute: workItem)
     }
 
-    @ViewBuilder
-    private func sharePill(borderGradient: LinearGradient) -> some View {
-        // Non-tappable info row (avoid false affordance)
-        HStack(spacing: 10) {
-            Image(systemName: "square.and.arrow.up")
-            Text("Share from the YouTube app")
-                .lineLimit(1)
-                .minimumScaleFactor(0.9)
-            Spacer()
-            Image("AppLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 22, height: 22)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.Color.accent.opacity(0.25), lineWidth: 0.5))
+    private func openBestPart(for card: DecisionCardModel) {
+        guard let videoId = viewModel.currentVideoID ?? viewModel.analysisResult?.videoId else { return }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "www.youtube.com"
+        components.path = "/watch"
+        var items = [URLQueryItem(name: "v", value: videoId)]
+        if let start = card.bestStartSeconds, start > 0 {
+            items.append(URLQueryItem(name: "t", value: "\(start)s"))
         }
-        .font(Theme.Font.subheadline)
-        .foregroundColor(Theme.Color.secondaryText)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Theme.Color.sectionBackground.opacity(0.35))
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.04))
-                        .blur(radius: 5)
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.7)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(borderGradient.opacity(0.6), lineWidth: 0.7)
-                .blendMode(.overlay)
-        )
-        .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
-    }
-
-    @ViewBuilder
-    private func pasteAnalyzeSection(borderGradient: LinearGradient) -> some View {
-        VStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Theme.Color.sectionBackground.opacity(0.32))
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.white.opacity(0.04))
-                            .blur(radius: 5)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 0.7)
-                    )
-                    .overlay(
-                        // Subtle focus glow that does not affect layout height
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Theme.Color.accent.opacity(isPasteFieldFocused ? 0.25 : 0.0), lineWidth: 2)
-                            .animation(.easeInOut(duration: 0.2), value: isPasteFieldFocused)
-                    )
-
-                HStack(spacing: 8) {
-                    TextField("Paste a YouTube link here", text: $inputURLText)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                        .keyboardType(.URL)
-                        .textContentType(.URL)
-                        .font(Theme.Font.subheadline)
-                        .foregroundColor(Theme.Color.primaryText)
-                        .submitLabel(.go)
-                        .focused($isPasteFieldFocused)
-                        .onSubmit { if isAnalyzeEnabled { analyzeWithHaptic() } }
-                        .frame(maxHeight: .infinity)
-
-                    if !inputURLText.isEmpty {
-                        Button(action: { inputURLText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Button(action: pasteFromClipboard) {
-                            Text("Paste")
-                                .font(Theme.Font.captionBold)
-                                .foregroundColor(Theme.Color.primaryText)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(Theme.Color.sectionBackground.opacity(0.4))
-                                        .overlay(
-                                            Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.7)
-                                        )
-                                )
-                                .overlay(
-                                    Capsule().stroke(borderGradient.opacity(0.6), lineWidth: 0.8)
-                                        .blendMode(.overlay)
-                                )
-                        }
-                        .accessibilityLabel("Paste from Clipboard")
-                    }
-                }
-                .padding(.horizontal, 10)
-            }
-            // Lock height so it never "shrinks" on focus or paste
-            .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight)
-            .onChange(of: inputURLText) { newVal in
-                updateValidation(for: newVal)
-                schedulePreview(for: newVal)
-            }
-
-            if let hint = validationHint, !isURLValid, !inputURLText.isEmpty {
-                Text(hint)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Color.secondaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 2)
-            }
-
-            if let preview = previewData, isURLValid {
-                TinyLinkPreview(preview: preview)
-            }
-
-            // In‑content CTA (primary). Lights up when input is valid.
-            HStack {
-                Spacer(minLength: 0)
-                Button(action: analyzeWithHaptic) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkles")
-                        Text("Analyze Video")
-                            .font(Theme.Font.subheadline)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: controlHeight)
-                    .foregroundColor(Theme.Color.primaryText)
-                    .padding(.horizontal, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Theme.Color.sectionBackground.opacity(0.85))
-                    )
-                    .overlay(
-                        // Base border
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(borderGradient, lineWidth: 1)
-                    )
-                    .overlay(
-                        Group {
-                            if isAnalyzeEnabled {
-                                LinearGradient(
-                                    gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                                .opacity(ctaPulse ? 0.4 : 0.2)
-                                .mask(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .strokeBorder(style: StrokeStyle(lineWidth: ctaPulse ? 3.5 : 2.0))
-                                )
-                                .scaleEffect(ctaPulse ? 1.02 : 1.0)
-                                .animation(.spring(response: 1.0, dampingFraction: 0.6, blendDuration: 0).repeatForever(autoreverses: true), value: ctaPulse)
-                                .onAppear { ctaPulse = true }
-                            }
-                        }
-                    )
-                    .shadow(color: Theme.Color.accent.opacity(ctaPulse ? 0.25 : 0.1), radius: ctaPulse ? 8 : 4, y: ctaPulse ? 4 : 2)
-                    .opacity(isAnalyzeEnabled ? 1.0 : 0.5)
-                }
-                .disabled(!isAnalyzeEnabled)
-                Spacer(minLength: 0)
-            }
+        components.queryItems = items
+        if let url = components.url {
+            openURL(url)
         }
     }
-
-    private func pasteFromClipboard() {
-        guard viewModel.viewState != .processing else { return }
-        if let url = UIPasteboard.general.url {
-            inputURLText = url.absoluteString
-        } else if let s = UIPasteboard.general.string {
-            inputURLText = s
-        }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        // No chip; keep experience subtle
-    }
-
-    private func analyzeWithHaptic() {
-        guard isAnalyzeEnabled else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        analyzePastedInput()
-    }
-
-    private func updateValidation(for input: String) {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            isURLValid = false
-            validationHint = nil
-            return
-        }
-        if resolveVideoURL(from: trimmed) != nil {
-            isURLValid = true
-            validationHint = nil
-        } else {
-            isURLValid = false
-            validationHint = "We need a YouTube link like https://www.youtube.com/watch?v=abc123 or a video ID."
-        }
-    }
-
-    private func schedulePreview(for input: String) {
-        previewTask?.cancel()
-        guard let url = resolveVideoURL(from: input) else { previewData = nil; return }
-        previewTask = Task {
-            try? await Task.sleep(nanoseconds: 350_000_000) // 350ms debounce
-            if Task.isCancelled { return }
-            if let meta = await fetchLPMetadata(for: url) {
-                let title = meta.title ?? url.host ?? ""
-                var image: UIImage? = nil
-                if let provider = meta.iconProvider { image = try? await provider.loadImage() }
-                if image == nil, let thumb = meta.imageProvider { image = try? await thumb.loadImage() }
-                await MainActor.run { previewData = TinyPreviewData(title: title, image: image) }
-            }
-        }
-    }
-
-    private func fetchLPMetadata(for url: URL) async -> LPLinkMetadata? {
-        await withCheckedContinuation { continuation in
-            let provider = LPMetadataProvider()
-            provider.timeout = 3
-            provider.startFetchingMetadata(for: url) { metadata, _ in
-                continuation.resume(returning: metadata)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func howItWorksSection(includeHeader: Bool = true) -> some View {
-        VStack(spacing: 14) {
-            if includeHeader {
-                Text("How It Works")
-                    .font(Theme.Font.headline.weight(.semibold))
-                    .foregroundColor(Theme.Color.primaryText)
-            }
-            VStack(spacing: 10) {
-                StepGuideRow(number: "1", icon: "play.rectangle.fill", title: "Open a YouTube video", description: "Pick any video you want")
-                StepGuideRow(number: "2", icon: "square.and.arrow.up", title: "Tap Share - More (...)", description: "In the YouTube app or browser")
-                StepGuideRow(number: "3", icon: "sparkles", title: "Choose WorthIt.AI", description: "Get instant insights")
-            }
-
-            // If you don't see WorthIt.AI in Share, make it visible once
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.circle.fill")
-                        .foregroundColor(Theme.Color.accent)
-                    Text("Don’t see WorthIt.AI in Share?")
-                        .font(Theme.Font.subheadline)
-                        .foregroundColor(Theme.Color.primaryText)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "1.circle.fill").foregroundColor(Theme.Color.accent)
-                        Text("In the Share sheet, scroll to the end and tap More (…)")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.Color.secondaryText)
-                    }
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "2.circle.fill").foregroundColor(Theme.Color.accent)
-                        Text("Tap ‘Edit Actions…’, enable WorthIt.AI, then tap Done")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.Color.secondaryText)
-                    }
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "3.circle.fill").foregroundColor(Theme.Color.accent)
-                        Text("Optional: Add to Favorites (⭐) to keep it at the top")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.Color.secondaryText)
-                    }
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Theme.Color.sectionBackground.opacity(0.45))
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.white.opacity(0.05))
-                            .blur(radius: 6)
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Theme.Gradient.appBluePurple.opacity(0.45), lineWidth: 0.9)
-                    .blendMode(.overlay)
-            )
-        }
-    }
-
     @ViewBuilder
     private func valueChipsSection() -> some View {
         HStack(spacing: 10) {
@@ -1074,13 +790,9 @@ struct RootView: View {
                         .font(Theme.Font.subheadline.weight(.semibold))
                         .foregroundColor(.white)
 
-                    Text("Unlock unlimited breakdowns and faster insights.")
+                    Text("Go unlimited, skip the waitlist, and unlock every WorthIt recap the moment inspiration strikes.")
                         .font(Theme.Font.caption)
-                        .foregroundColor(.white.opacity(0.85))
-
-                    Text("You’re on the free tier today. Premium removes the daily limit and speeds up processing.")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(.white.opacity(0.75))
+                        .foregroundColor(.white.opacity(0.82))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1265,50 +977,6 @@ struct GentleBannerView: View {
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: isVisible)
         .onAppear { isVisible = true }
-    }
-}
-
-struct StepGuideRow: View {
-    let number: String
-    let icon: String
-    let title: String
-    let description: String
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // Step number badge (subtle, on-brand)
-            ZStack {
-                Circle()
-                    .fill(Theme.Color.sectionBackground.opacity(0.85))
-                    .frame(width: 24, height: 24)
-                    .overlay(
-                        Circle().stroke(Theme.Gradient.appBluePurple, lineWidth: 1).opacity(0.6)
-                    )
-                Text(number)
-                    .font(Theme.Font.captionBold)
-                    .foregroundColor(Theme.Color.accent)
-                    .accessibilityLabel("Step \(number)")
-            }
-            
-            // Icon
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundColor(Theme.Color.accent)
-                .frame(width: 24)
-            
-            // Content
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(Theme.Font.subheadline.weight(.semibold))
-                    .foregroundColor(Theme.Color.primaryText)
-                Text(description)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Color.secondaryText)
-                    .lineLimit(2)
-            }
-            
-            Spacer()
-        }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
@@ -1323,398 +991,7 @@ struct StepGuideRow: View {
     }
 }
 
-// MARK: - Recent Videos Center Modal (no database)
-struct RecentVideosCenterModal: View {
-    let onDismiss: () -> Void
-    let onSelect: (CacheManager.RecentAnalysisItem) -> Void
-    @State private var items: [CacheManager.RecentAnalysisItem] = []
-    @State private var showContent = false
-    @State private var dragOffset: CGFloat = 0
-    @State private var isDismissing = false
-    let borderGradient: LinearGradient
-
-    private var backdropOpacity: Double {
-        let alpha = 0.35 - Double(min(dragOffset, 160)) / 600.0
-        return max(0.05, alpha)
-    }
-
-    private func dismiss(after delay: TimeInterval = 0.18, haptic: Bool) {
-        guard !isDismissing else { return }
-        isDismissing = true
-        if haptic {
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        }
-        if !haptic {
-            dragOffset = 0
-        }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-            showContent = false
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            onDismiss()
-        }
-    }
-
-    var body: some View {
-        ZStack {
-            // Dimmed backdrop with subtle blur
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea()
-                .overlay(Color.black.opacity(backdropOpacity).ignoresSafeArea())
-                .onTapGesture {
-                    dismiss(haptic: false)
-                }
-
-            // Card
-            VStack(spacing: 18) {
-                HStack {
-                    Button(action: { dismiss(haptic: false) }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 17, weight: .semibold))
-                            Text("Back")
-                                .font(Theme.Font.subheadline.weight(.medium))
-                        }
-                        .foregroundStyle(Theme.Gradient.appBluePurple)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Theme.Color.sectionBackground.opacity(0.72))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Theme.Color.accent.opacity(0.28), lineWidth: 1)
-                        )
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 8)
-
-                VStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 18) {
-                        HStack(spacing: 16) {
-                            ZStack {
-                                Circle()
-                                    .fill(Theme.Gradient.appBluePurple)
-                                    .frame(width: 52, height: 52)
-                                    .overlay(
-                                        Circle()
-                                            .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
-                                            .shadow(color: Theme.Color.accent.opacity(0.45), radius: 12, y: 6)
-                                    )
-
-                                Image(systemName: "play.rectangle.fill")
-                                    .font(.system(size: 24, weight: .semibold))
-                                    .foregroundColor(.white)
-                            }
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Recent Videos")
-                                    .font(Theme.Font.title3.weight(.bold))
-                                    .foregroundColor(Theme.Color.primaryText)
-
-                                Text("Jump back into your latest WorthIt insights.")
-                                    .font(Theme.Font.subheadline)
-                                    .foregroundColor(Theme.Color.secondaryText.opacity(0.92))
-                            }
-
-                            Spacer()
-
-                            Capsule()
-                                .fill(Theme.Gradient.appBluePurple.opacity(0.65))
-                                .overlay(
-                                    Capsule()
-                                        .stroke(Theme.Color.accent.opacity(0.25), lineWidth: 1)
-                                )
-                                .frame(width: 82, height: 30)
-                                .overlay(
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "sparkles")
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(.white.opacity(0.92))
-                                        Text("WorthIt")
-                                            .font(Theme.Font.caption.weight(.semibold))
-                                            .foregroundColor(.white.opacity(0.92))
-                                    }
-                                )
-                        }
-
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(Theme.Color.sectionBackground.opacity(0.6))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
-                            )
-                            .frame(height: 3)
-                            .overlay(
-                                LinearGradient(colors: [Theme.Color.accent.opacity(0.8), Theme.Color.purple.opacity(0.6)], startPoint: .leading, endPoint: .trailing)
-                                    .frame(height: 3)
-                                    .cornerRadius(999)
-                            )
-                            .opacity(0.9)
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 28)
-                    .padding(.bottom, 16)
-
-                    Divider()
-                        .background(Theme.Color.accent.opacity(0.15))
-                        .padding(.horizontal, 24)
-
-                    if items.isEmpty {
-                        VStack(spacing: 16) {
-                            Image(systemName: "sparkles.tv.fill")
-                                .font(.system(size: 48))
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(Theme.Color.accent, Theme.Color.secondaryText)
-                            Text("No recent insights yet!")
-                                .font(Theme.Font.headline.weight(.semibold))
-                                .foregroundColor(Theme.Color.primaryText)
-                            Text("Share a YouTube video or paste a link to get started with WorthIt.AI.")
-                                .font(Theme.Font.subheadline)
-                                .foregroundColor(Theme.Color.secondaryText)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 24)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 160)
-                        .padding(.vertical, 48)
-                    } else {
-                        ScrollView {
-                            LazyVStack(spacing: 16) {
-                                ForEach(items) { item in
-                                    Button(action: { onSelect(item) }) {
-                                        let title = cleanedTitle(for: item)
-                                        let formattedDate = item.modifiedAt.formatted(date: .abbreviated, time: .omitted)
-
-                                        HStack(alignment: .center, spacing: 18) {
-                                            ZStack {
-                                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                    .fill(Theme.Color.sectionBackground.opacity(0.85))
-                                                AsyncImage(url: item.thumbnailURL) { phase in
-                                                    switch phase {
-                                                    case .empty:
-                                                        ProgressView()
-                                                            .progressViewStyle(CircularProgressViewStyle(tint: Theme.Color.accent))
-                                                    case .success(let image):
-                                                        image
-                                                            .resizable()
-                                                            .scaledToFill()
-                                                    case .failure:
-                                                        Image(systemName: "film.fill")
-                                                            .resizable()
-                                                            .scaledToFit()
-                                                            .padding(16)
-                                                            .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
-                                                    @unknown default:
-                                                        Color.clear
-                                                    }
-                                                }
-                                            }
-                                            .frame(width: 128, height: 78)
-                                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                    .strokeBorder(borderGradient, lineWidth: 1)
-                                                    .opacity(0.9)
-                                            )
-                                            .shadow(color: .black.opacity(0.35), radius: 18, y: 10)
-
-                                            VStack(alignment: .leading, spacing: 10) {
-                                                if !title.isEmpty {
-                                                    Text(title)
-                                                        .font(Theme.Font.subheadlineBold)
-                                                        .foregroundColor(Theme.Color.primaryText)
-                                                        .lineLimit(2)
-                                                        .multilineTextAlignment(.leading)
-                                                }
-
-                                                HStack(spacing: 10) {
-                                                    Label(formattedDate, systemImage: "calendar")
-                                                        .labelStyle(.titleAndIcon)
-                                                        .font(Theme.Font.caption)
-                                                        .foregroundColor(Theme.Color.secondaryText.opacity(0.95))
-                                                        .padding(.horizontal, 12)
-                                                        .padding(.vertical, 6)
-                                                        .background(
-                                                            Capsule()
-                                                                .fill(Theme.Color.sectionBackground.opacity(0.7))
-                                                        )
-                                                        .overlay(
-                                                            Capsule()
-                                                                .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
-                                                        )
-
-                                                    Spacer(minLength: 0)
-
-                                                    if let score = displayedScore(for: item) {
-                                                        scoreBadge(for: score)
-                                                    }
-                                                }
-                                            }
-
-                                            Spacer(minLength: 0)
-
-                                            Image(systemName: "chevron.right")
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
-                                                .padding(12)
-                                                .background(
-                                                    Circle()
-                                                        .fill(Theme.Color.sectionBackground.opacity(0.75))
-                                                )
-                                                .overlay(
-                                                    Circle()
-                                                        .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
-                                                )
-                                        }
-                                        .padding(.horizontal, 20)
-                                        .padding(.vertical, 18)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                                .fill(
-                                                    LinearGradient(
-                                                        gradient: Gradient(colors: [Theme.Color.sectionBackground.opacity(0.92), Theme.Color.sectionBackground.opacity(0.65)]),
-                                                        startPoint: .topLeading,
-                                                        endPoint: .bottomTrailing
-                                                    )
-                                                )
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                                        .strokeBorder(borderGradient.opacity(0.55), lineWidth: 1)
-                                                )
-                                                .shadow(color: .black.opacity(0.25), radius: 22, y: 14)
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contentShape(Rectangle())
-                                }
-                            }
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 26)
-                        }
-                        .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .fill(Theme.Color.sectionBackground.opacity(0.97))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .stroke(borderGradient, lineWidth: 1.0)
-                )
-                .shadow(color: .black.opacity(0.34), radius: 20, y: 14)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 18)
-            .offset(x: dragOffset)
-            .opacity(showContent ? 1 : 0)
-            .scaleEffect(showContent ? 1 : 0.98)
-            .onAppear {
-                dragOffset = 0
-                isDismissing = false
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { showContent = true }
-                Task { @MainActor in
-                    items = await CacheManager.shared.listRecentAnalyses()
-                }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 15)
-                    .onChanged { value in
-                        guard !isDismissing else { return }
-                        let translation = value.translation.width
-                        if translation > 0 {
-                            dragOffset = translation
-                        }
-                    }
-                    .onEnded { value in
-                        guard !isDismissing else { return }
-                        if value.translation.width > 90 {
-                            let target = UIScreen.main.bounds.width * 0.65
-                            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                                dragOffset = target
-                            }
-                            dismiss(haptic: true)
-                        } else {
-                            withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) {
-                                dragOffset = 0
-                            }
-                        }
-                    }
-            )
-        }
-        .preferredColorScheme(.dark)
-    }
-
-    private func displayedScore(for item: CacheManager.RecentAnalysisItem) -> Double? {
-        if let score = item.finalScore {
-            return score
-        }
-        // Fallback when there are no comment insights cached yet – mirror the transcript-only heuristic.
-        return 60
-    }
-
-    private func scoreBadge(for score: Double) -> some View {
-        let clampedScore = max(0, min(score, 100))
-        let formattedScore = "\(Int(clampedScore))%"
-
-        return ZStack {
-            Circle()
-                .fill(Theme.Color.sectionBackground.opacity(0.88))
-                .shadow(color: Theme.Color.accent.opacity(0.35), radius: 12, y: 6)
-
-            Circle()
-                .strokeBorder(scoreGradient(for: clampedScore), lineWidth: 2)
-                .overlay(
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
-                        .blur(radius: 0.5)
-                )
-
-            VStack(spacing: 4) {
-                Text(formattedScore)
-                    .font(Theme.Font.subheadline.weight(.bold))
-                    .foregroundColor(.white)
-                    .minimumScaleFactor(0.8)
-
-                Text("Score")
-                    .font(Theme.Font.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
-                    .tracking(0.5)
-            }
-            .padding(.vertical, 4)
-        }
-        .frame(width: 66, height: 66)
-    }
-
-    private func scoreGradient(for score: Double) -> LinearGradient {
-        let colors: [Color]
-        switch score {
-        case 80...:
-            colors = [Theme.Color.accent, Theme.Color.purple]
-        case 60..<80:
-            colors = [Theme.Color.orange.opacity(0.9), Theme.Color.accent]
-        case 40..<60:
-            colors = [Theme.Color.warning.opacity(0.85), Theme.Color.orange.opacity(0.8)]
-        default:
-            colors = [Theme.Color.error.opacity(0.85), Theme.Color.orange.opacity(0.75)]
-        }
-
-        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
-    private func cleanedTitle(for item: CacheManager.RecentAnalysisItem) -> String {
-        let t = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let looksLikeId = t.count == 11 && t.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil
-        return looksLikeId ? "" : t
-    }
-}
+// RecentVideosCenterModal lives in a dedicated file for clarity.
 
 // Centered modal error with blurred background and improved contrast
 struct FocusErrorModalView: View {
@@ -1982,12 +1259,6 @@ private struct AnalyzeReadyGlow: ViewModifier {
     }
 }
 
-// MARK: - Tiny Link Preview
-struct TinyPreviewData {
-    let title: String
-    let image: UIImage?
-}
-
 struct ShareExplanationModal: View {
     let onDismiss: () -> Void
     let borderGradient: LinearGradient
@@ -2060,10 +1331,10 @@ struct ShareExplanationModal: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         StepByStepGuide(steps: [
-                            StepData(icon: "play.rectangle.fill", title: "Open a YouTube Video", description: "Pick any video you want to analyze."),
-                            StepData(icon: "square.and.arrow.up", title: "Tap the Share Button", description: "Tap the Share icon (arrow)."),
-                            StepData(icon: "sparkles", title: "Choose WorthIt.AI", description: "Select WorthIt.AI from the share sheet.")
-                        ])
+                        StepData(icon: "play.rectangle.fill", title: "Open a YouTube Video", description: "Pick any video you want to analyze."),
+                        StepData(icon: "square.and.arrow.up", title: "Tap the Share Button", description: "Tap the Share arrow under the video. If YouTube shows its vertical overlay first, tap Share again to open the iOS Share Sheet, then tap More (…) if you still don’t see WorthIt.AI."),
+                        StepData(icon: "sparkles", title: "Choose WorthIt.AI", description: "Select WorthIt.AI from the Share Sheet to send the link into WorthIt.")
+                    ])
 
                         AddToFavoritesSection()
                     }
@@ -2145,16 +1416,13 @@ struct AddToFavoritesSection: View {
                     Text("Here’s how:")
                         .font(Theme.Font.subheadline.weight(.bold))
                         .foregroundColor(Theme.Color.primaryText)
-                    Text("1. In the share sheet, scroll right and tap More (…)")
+                    Text("1. Swipe up on the Share Sheet and tap More (…) at the end of the horizontal row.")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.Color.secondaryText)
-                    Text("2. Find WorthIt.AI in the list")
+                    Text("2. Tap “Edit Actions…”, then tap the green + next to WorthIt.AI to move it into Favorites and tap Done.")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.Color.secondaryText)
-                    Text("3. Tap Edit (top-right) → add WorthIt.AI to Favourites")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
-                    Text("4. Optional: drag it to the top so it appears first")
+                    Text("3. Optional: drag WorthIt.AI to the top of Favorites so it always appears first.")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.Color.secondaryText)
                 }
@@ -2163,337 +1431,424 @@ struct AddToFavoritesSection: View {
     }
 }
 
-struct TinyLinkPreview: View {
-    let preview: TinyPreviewData
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Group {
-                if let img = preview.image {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Image(systemName: "link.circle.fill")
-                        .resizable()
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundColor(Theme.Color.secondaryText)
-                }
-            }
-            .frame(width: 32, height: 32)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            Text(preview.title)
-                .font(Theme.Font.subheadline)
-                .foregroundColor(Theme.Color.primaryText)
-                .lineLimit(1)
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Theme.Color.sectionBackground.opacity(0.7))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
-        )
-    }
+struct OnboardingCallbacks {
+    let onSkip: () -> Void
+    let onFocusPaste: () -> Void
+    let onShareSetup: () -> Void
+    let onDemoPlayback: () -> Void
 }
 
 struct OnboardingView: View {
-    @Binding var hasOnboarded: Bool
-    @State private var showGlow: Bool = false
-    @State private var pageIndex: Int = 0
+    let callbacks: OnboardingCallbacks
 
-    private var backgroundGradient: LinearGradient {
-        switch pageIndex {
-        case 0: return Theme.Gradient.accent
-        case 1: return Theme.Gradient.appBluePurple
-        case 2: return Theme.Gradient.tealGreen
-        case 3: return Theme.Gradient.accent
-        default: return Theme.Gradient.appBluePurple
-        }
+    @State private var currentPage = 0
+    @State private var animateGlow = false
+
+    private var deviceHeight: CGFloat { UIScreen.main.bounds.height }
+    private var isCompactVertical: Bool { deviceHeight <= 736 }
+    private var baseStackSpacing: CGFloat { isCompactVertical ? 16 : 20 }
+    private var slideStackSpacing: CGFloat { isCompactVertical ? 22 : 28 }
+    private var headerStackSpacing: CGFloat { isCompactVertical ? 8 : 12 }
+    private var cardStackSpacing: CGFloat { isCompactVertical ? 10 : 12 }
+    private var cardMinimumHeight: CGFloat { (isCompactVertical ? 96 : 104) * 0.8 }
+
+    private func tabViewHeight(for availableHeight: CGFloat) -> CGFloat {
+        let preferred = availableHeight * 0.68
+        let base: CGFloat = isCompactVertical ? 540 : 620
+        return max(min(base, preferred), 460)
+    }
+
+    private var slides: [OnboardingSlide] {
+        [
+                OnboardingSlide(
+                id: 0,
+                eyebrow: "Watch less, learn more",
+                title: "Welcome to WorthIt",
+                detail: "Skip the fluff—WorthIt surfaces the signal fast.",
+                caption: nil,
+                cards: [
+                    OnboardingCard(icon: "bolt.fill", title: "Instant TL;DR", description: "Full summary in seconds.", action: .none),
+                    OnboardingCard(icon: "sparkles", title: "Jump to the gems", description: "Highlights take you to key moments.", action: .none),
+                    OnboardingCard(icon: "questionmark.circle", title: "Ask sharper questions", description: "Chat with the transcript and get instant answers.", action: .none)
+                ]
+            ),
+            OnboardingSlide(
+                id: 1,
+                eyebrow: "Score · Essentials · Sentiment",
+                title: "Value first, video later",
+                detail: "Score, essentials, and sentiment show what to watch.",
+                caption: nil,
+                cards: [
+                    OnboardingCard(icon: "gauge.medium", title: "WorthIt score decoded", description: "Instant 0–100 depth read.", action: .none),
+                    OnboardingCard(icon: "list.bullet.rectangle", title: "Essentials on autopilot", description: "Storyline, highlights, and chapters for you.", action: .none),
+                    OnboardingCard(icon: "bubble.left.and.bubble.right.fill", title: "Community vibe check", description: "Comment sentiment in one glance.", action: .none)
+                ]
+            ),
+            OnboardingSlide(
+                id: 2,
+                eyebrow: "Start in seconds",
+                title: "Start now",
+                detail: "Fire up a demo, paste a link, or share from YouTube.",
+                caption: nil,
+                cards: [
+                    OnboardingCard(icon: "play.rectangle.on.rectangle.fill", title: "Watch the instant demo", description: "See a real video compressed into the WorthIt experience.", action: .demoPlayback),
+                    OnboardingCard(icon: "link.circle.fill", title: "Paste a YouTube link", description: "Drop any URL and WorthIt handles the rest.", action: .focusPaste),
+                    OnboardingCard(icon: "square.and.arrow.up", title: "Share from the YouTube app", description: "Tap the Share arrow, then More (…) if you need to reveal WorthIt.AI and pin it in Favorites.", action: .shareSetup)
+                ]
+            )
+        ]
     }
 
     var body: some View {
-        ZStack {
-            // Rich background that matches the app's accent look
-            Theme.Color.darkBackground.ignoresSafeArea()
-            backgroundGradient
-                .opacity(showGlow ? 0.5 : 0.25)
-                .blur(radius: showGlow ? 30 : 18)
-                .ignoresSafeArea()
-                .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: showGlow)
+        GeometryReader { geometry in
+            let safeAreaInsets = geometry.safeAreaInsets
+            let availableHeight = max(geometry.size.height - (safeAreaInsets.top + safeAreaInsets.bottom), 520)
+            let tabHeight = tabViewHeight(for: availableHeight)
+            let contentWidth = min(geometry.size.width - 56, 620)
 
-            VStack(spacing: 0) {
-                // Top bar with Skip
-                HStack {
-                    Spacer()
-                    Button("Skip") { hasOnboarded = true }
-                        .font(Theme.Font.subheadlineBold)
-                        .foregroundColor(Theme.Color.secondaryText)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Theme.Color.sectionBackground.opacity(0.6))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Theme.Color.accent.opacity(0.25), lineWidth: 1)
-                        )
-                        .padding([.top, .trailing], 20)
-                        .accessibilityLabel("Skip onboarding")
+            ZStack {
+                Theme.Color.darkBackground.ignoresSafeArea()
+                Theme.Gradient.appBluePurple
+                    .opacity(animateGlow ? 0.46 : 0.2)
+                    .blur(radius: animateGlow ? 36 : 18)
+                    .ignoresSafeArea()
+                    .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: animateGlow)
+
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: baseStackSpacing) {
+                        HStack {
+                            Image("AppLogo")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 46, height: 46)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .shadow(color: Color.black.opacity(0.25), radius: 8, y: 4)
+                                .padding(.leading, 8)
+                            Spacer()
+                            Button(action: callbacks.onSkip) {
+                                Text("Skip")
+                                    .font(Theme.Font.subheadlineBold)
+                                    .foregroundColor(Theme.Color.secondaryText)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Theme.Color.sectionBackground.opacity(0.55))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Skip onboarding")
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, max(safeAreaInsets.top, 8))
+
+                        if #available(iOS 17, *) {
+                            TabView(selection: $currentPage) {
+                                ForEach(slides) { slide in
+                                    slideView(for: slide, contentWidth: contentWidth)
+                                        .tag(slide.id)
+                                }
+                            }
+                            .tabViewStyle(.page(indexDisplayMode: .never))
+                            .indexViewStyle(.page(backgroundDisplayMode: .never))
+                            .frame(height: tabHeight)
+                        } else {
+                            TabView(selection: $currentPage) {
+                                ForEach(slides) { slide in
+                                    slideView(for: slide, contentWidth: contentWidth)
+                                        .tag(slide.id)
+                                }
+                            }
+                            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+                            .indexViewStyle(PageIndexViewStyle(backgroundDisplayMode: .never))
+                            .frame(height: tabHeight)
+                        }
+
+                        PageIndicator(total: slides.count, current: currentPage)
+                            .padding(.top, 8)
+
+                        VStack(spacing: isCompactVertical ? 10 : 12) {
+                            Button(action: primaryButtonAction) {
+                                HStack(spacing: 10) {
+                                    Text(primaryButtonTitle)
+                                    Image(systemName: currentPage == slides.count - 1 ? "arrow.right.circle.fill" : "arrow.right")
+                                }
+                                .font(Theme.Font.headlineBold)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.horizontal, 28)
+                                .padding(.vertical, 14)
+                                .background(Theme.Gradient.appBluePurple)
+                                .cornerRadius(16)
+                                .shadow(color: Theme.Color.purple.opacity(0.35), radius: 14, y: 6)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 28)
+
+                            Color.clear
+                                .frame(height: 24)
+                                .accessibilityHidden(true)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, max(safeAreaInsets.bottom, 16))
                 }
-
-                TabView(selection: $pageIndex) {
-                    // 0 — Welcome with app logo
-                    OnboardingPage(
-                        icon: "sparkles.tv.fill",
-                        logoImageName: "AppLogo",
-                        title: "Welcome to WorthIt.AI",
-                        description: "Smarter summaries, key insights, and Q&A in seconds.",
-                        accentColor: Theme.Color.accent,
-                        highlights: [
-                            "Smart summaries in seconds",
-                            "Key insights you can act on",
-                            "Ask anything about the video"
-                        ]
-                    ).tag(0)
-
-                    // 1 — Share from YouTube (blue)
-                    OnboardingPage(
-                        icon: "square.and.arrow.up",
-                        title: "Share from YouTube",
-                        description: "In YouTube, tap Share → WorthIt.AI to analyze instantly.",
-                        accentColor: Color.blue,
-                        highlights: [
-                            "No copy/paste needed",
-                            "Works from the YouTube app",
-                            "Opens results in WorthIt.AI"
-                        ]
-                    ).tag(1)
-
-                    // 2 — Paste a Link (green)
-                    OnboardingPage(
-                        icon: "doc.on.clipboard.fill",
-                        title: "Paste a Link",
-                        description: "Prefer to paste? Drop any YouTube URL to get results.",
-                        accentColor: Theme.Color.success,
-                        highlights: [
-                            "Paste a link from anywhere",
-                            "See summary and insights",
-                            "Follow up with Q&A"
-                        ]
-                    ).tag(2)
-
-                    // 3 — Worth‑It Score with gauge
-                    OnboardingScorePage().tag(3)
-
-                    // 4 — Ready
-                    OnboardingPage(
-                        icon: "hand.thumbsup.fill",
-                        title: "Ready to Go",
-                        description: "Let’s dive into smarter video learning.",
-                        accentColor: Color.green,
-                        showDismissButton: true,
-                        onDismiss: { hasOnboarded = true }
-                    ).tag(4)
-                }
-                .tabViewStyle(.page(indexDisplayMode: .always))
-                .indexViewStyle(.page(backgroundDisplayMode: .always))
-                .padding(.bottom, 8)
-
-                // Footer note for trust
-                Text("We only process public video data you choose to analyze.")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Color.secondaryText.opacity(0.8))
-                    .padding(.bottom, 20)
-                    .padding(.horizontal)
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .onAppear { showGlow = true }
+        .onAppear {
+            animateGlow = true
+        }
         .preferredColorScheme(.dark)
     }
-}
 
-struct OnboardingPage: View {
-    let icon: String
-    var logoImageName: String? = nil
-    let title: String
-    let description: String
-    let accentColor: Color
-    var highlights: [String] = []
-    var showDismissButton: Bool = false
-    var onDismiss: (() -> Void)? = nil
-
-    var body: some View {
-        VStack(spacing: 26) {
-            // Feature card matching app cards style
-            VStack(spacing: 18) {
-                ZStack {
-                    if let logo = logoImageName {
-                        // Show only the logo — no background circles or borders
-                        Image(logo)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 84, height: 84)
-                            .shadow(color: accentColor.opacity(0.35), radius: 6, y: 3)
-                    } else {
-                        // Icon variant with soft circular backdrop
-                        Circle()
-                            .fill(accentColor.opacity(0.15))
-                            .frame(width: 96, height: 96)
-                            .overlay(Circle().stroke(accentColor.opacity(0.35), lineWidth: 1))
-
-                        Image(systemName: icon)
-                            .font(.system(size: 44, weight: .semibold))
-                            .foregroundColor(accentColor)
-                            .shadow(color: accentColor.opacity(0.5), radius: 8, y: 4)
-                            .scaleEffect(1.0)
-                            .animation(.spring(response: 0.6, dampingFraction: 0.7), value: icon)
-                    }
+    @ViewBuilder
+    private func slideView(for slide: OnboardingSlide, contentWidth: CGFloat) -> some View {
+        VStack(spacing: slideStackSpacing) {
+            VStack(spacing: headerStackSpacing) {
+                if let eyebrow = slide.eyebrow {
+                    Text(eyebrow.uppercased())
+                        .font(Theme.Font.captionBold)
+                        .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
+                        .tracking(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text(title)
-                    .font(Theme.Font.title)
-                    .foregroundColor(Theme.Color.primaryText)
+                Text(slide.title)
+                    .font(Theme.Font.largeTitle)
                     .multilineTextAlignment(.center)
-
-                Text(description)
-                    .font(Theme.Font.subheadline)
-                    .foregroundColor(Theme.Color.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
-
-                if !highlights.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(highlights, id: \.self) { item in
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(accentColor)
-                                Text(item)
-                                    .font(Theme.Font.caption)
-                                    .foregroundColor(Theme.Color.secondaryText)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: 520)
-                    .padding(.top, 4)
-                }
-            }
-            .padding(24)
-            .background(
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(Theme.Color.sectionBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20)
-                            .stroke(accentColor.opacity(0.25), lineWidth: 1)
-                    )
-            )
-            .shadow(color: accentColor.opacity(0.15), radius: 10, y: 6)
-
-            if showDismissButton {
-                Button(action: { onDismiss?() }) {
-                    HStack(spacing: 10) {
-                        Text("Get Started")
-                        Image(systemName: "arrow.right.circle.fill")
-                    }
-                    .font(Theme.Font.title3)
                     .foregroundColor(.white)
-                    .padding(.vertical, 14)
-                    .padding(.horizontal, 32)
-                    .background(Theme.Gradient.appBluePurple)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18)
-                            .stroke(Theme.Color.accent.opacity(0.35), lineWidth: 1)
-                    )
-                    .cornerRadius(18)
-                    .shadow(color: Theme.Color.accent.opacity(0.35), radius: 12, y: 6)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+                    .frame(maxWidth: .infinity)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let detail = slide.detail {
+                        Text(detail)
+                            .font(Theme.Font.body)
+                        .foregroundColor(Theme.Color.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 14)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .buttonStyle(.plain)
-                .padding(.top, 8)
-                .accessibilityLabel("Get Started with WorthIt.AI")
+
+                if let caption = slide.caption {
+                    Text(caption)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 14)
+                }
+            }
+            .padding(.top, isCompactVertical ? 4 : 8)
+
+            VStack(spacing: cardStackSpacing) {
+                ForEach(slide.cards) { card in
+                OnboardingCardView(
+                    card: card,
+                    minHeight: cardMinimumHeight,
+                    actionHandler: {
+                        handleCardAction(card.action)
+                    }
+                )
             }
         }
-        .padding(28)
-        .accessibilityElement(children: .combine)
+        }
+        .frame(maxWidth: contentWidth, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 28)
+        .padding(.bottom, 12)
+    }
+
+    private var primaryButtonTitle: String {
+        currentPage == slides.count - 1 ? "Get started" : "Continue"
+    }
+
+    private func primaryButtonAction() {
+        if currentPage == slides.count - 1 {
+            callbacks.onFocusPaste()
+        } else {
+            withAnimation(.easeInOut(duration: 0.45)) {
+                currentPage = min(currentPage + 1, slides.count - 1)
+            }
+        }
+    }
+
+    private func handleCardAction(_ action: OnboardingCard.Action) {
+        switch action {
+        case .none:
+            break
+        case .focusPaste:
+            callbacks.onFocusPaste()
+        case .shareSetup:
+            callbacks.onShareSetup()
+        case .demoPlayback:
+            callbacks.onDemoPlayback()
+        }
     }
 }
 
-// Dedicated page explaining the Worth‑It Score with the existing gauge
-struct OnboardingScorePage: View {
-    @State private var dummyShow = false
-    @State private var animDone = false
+private struct OnboardingSlide: Identifiable {
+    let id: Int
+    let eyebrow: String?
+    let title: String
+    let detail: String?
+    let caption: String?
+    let cards: [OnboardingCard]
+}
 
-    var body: some View {
-        VStack(spacing: 26) {
-            VStack(spacing: 18) {
-                ZStack {
-                    Circle()
-                        .fill(Theme.Color.accent.opacity(0.15))
-                        .frame(width: 96, height: 96)
-                        .overlay(Circle().stroke(Theme.Color.accent.opacity(0.35), lineWidth: 1))
+private struct OnboardingCard: Identifiable {
+    enum Action {
+        case none
+        case focusPaste
+        case shareSetup
+        case demoPlayback
+    }
 
-                    // Gauge preview with a representative score
-                    ScoreGaugeView(
-                        score: 88,
-                        isLoading: false,
-                        showBreakdown: $dummyShow,
-                        isAnimationCompleted: $animDone
-                    )
-                    .frame(width: 72, height: 72)
-                }
+    let id = UUID()
+    let icon: String
+    let title: String
+    let description: String?
+    let action: Action
+}
 
-                Text("Worth‑It Score")
-                    .font(Theme.Font.title)
-                    .foregroundColor(Theme.Color.primaryText)
-                    .multilineTextAlignment(.center)
+private struct OnboardingCardView: View {
+    let card: OnboardingCard
+    let minHeight: CGFloat
+    let actionHandler: () -> Void
 
-                Text("A quick signal of how valuable a video is for learning.")
-                    .font(Theme.Font.subheadline)
+    private var cardBase: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: card.icon)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.Gradient.appBluePurple)
+                .frame(width: 36, height: 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Theme.Color.sectionBackground.opacity(0.6))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                )
+
+        VStack(alignment: .center, spacing: card.description == nil ? 0 : 4) {
+            Text(card.title)
+                .font(Theme.Font.subheadlineBold)
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let description = card.description {
+                Text(description)
+                    .font(Theme.Font.caption)
                     .foregroundColor(Theme.Color.secondaryText)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "sparkles").foregroundColor(Theme.Color.accent)
-                        Text("Focuses on substance: we analyze the talk, not the fluff.")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.Color.secondaryText)
-                    }
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "person.2.fill").foregroundColor(Theme.Color.accent)
-                        Text("Blends video content quality with community sentiment.")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.Color.secondaryText)
-                    }
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "gauge.high").foregroundColor(Theme.Color.accent)
-                        Text("One clear 0–100 score — green is great, yellow is decent.")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.Color.secondaryText)
-                    }
-                }
-                .frame(maxWidth: 520)
-                .padding(.top, 4)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(24)
-            .background(
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(Theme.Color.sectionBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20)
-                            .stroke(Theme.Color.accent.opacity(0.25), lineWidth: 1)
-                    )
-            )
-            .shadow(color: Theme.Color.accent.opacity(0.15), radius: 10, y: 6)
         }
-        .padding(28)
+        .frame(maxHeight: .infinity, alignment: .center)
+
+            Spacer()
+
+            if card.action != .none {
+                Image(systemName: "arrow.forward.circle.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.8))
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Theme.Color.sectionBackground.opacity(0.58))
+                .background(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color.white.opacity(0.05))
+                        .blur(radius: 10)
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Theme.Gradient.appBluePurple.opacity(0.55), lineWidth: 0.9)
+        )
+        .shadow(color: Color.black.opacity(0.2), radius: 12, y: 6)
     }
+
+    var body: some View {
+        if card.action == .none {
+            cardBase
+        } else {
+            Button(action: actionHandler) {
+                cardBase
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+struct PageIndicator: View {
+    let total: Int
+    let current: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(0..<total, id: \.self) { index in
+                let isActive = index == current
+                IndicatorDot(isActive: isActive)
+                    .animation(.easeInOut(duration: 0.2), value: isActive)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Theme.Color.sectionBackground.opacity(0.6))
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+        )
+    }
+}
+
+private struct IndicatorDot: View {
+    let isActive: Bool
+
+    var body: some View {
+        Capsule(style: .continuous)
+            .fill(fillStyle)
+            .frame(width: isActive ? 30 : 10, height: 6)
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Theme.Gradient.appBluePurple, lineWidth: strokeWidth)
+                    .opacity(strokeOpacity)
+            )
+    }
+
+    private var fillStyle: AnyShapeStyle {
+        if isActive {
+            let gradient = LinearGradient(
+                gradient: Gradient(colors: [Theme.Color.accent, Theme.Color.purple]),
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            return AnyShapeStyle(gradient)
+        }
+        return AnyShapeStyle(Theme.Color.sectionBackground.opacity(0.75))
+    }
+
+    private var strokeWidth: CGFloat { isActive ? 1.4 : 0.6 }
+    private var strokeOpacity: Double { isActive ? 0.55 : 0.18 }
 }
 
 private struct TimeSavedBannerView: View {
@@ -2700,27 +2055,6 @@ private struct TimeSavedBannerView: View {
         }
     }
 }
-
-
-// Async helper to load UIImage from an NSItemProvider if available
-private extension NSItemProvider {
-    func loadImage() async throws -> UIImage? {
-        try await withCheckedThrowingContinuation { continuation in
-            if self.canLoadObject(ofClass: UIImage.self) {
-                self.loadObject(ofClass: UIImage.self) { obj, err in
-                    if let err = err {
-                        continuation.resume(throwing: err)
-                        return
-                    }
-                    continuation.resume(returning: obj as? UIImage)
-                }
-            } else {
-                continuation.resume(returning: nil)
-            }
-        }
-    }
-}
-
 #if DEBUG
 struct RootView_Previews: PreviewProvider {
     static let previewSubscriptionManager = SubscriptionManager()
@@ -2742,7 +2076,23 @@ struct RootView_Previews: PreviewProvider {
             // Assuming MainViewModel.currentVideoThumbnailURL is URL?
             vm.currentVideoThumbnailURL = URL(string: "https://i.ytimg.com/vi/TestId/sddefault.jpg")
             vm.worthItScore = 78
-            vm.scoreBreakdownDetails = ScoreBreakdown(contentDepthScore: 0.75, commentSentimentScore: 0.82, hasComments: true, contentDepthRaw: 0.77, commentSentimentRaw: 0.40, finalScore: 78, videoTitle: "AI Unveiled", positiveCommentThemes: ["Very informative"], negativeCommentThemes: [])
+            vm.scoreBreakdownDetails = ScoreBreakdown(
+                contentDepthScore: 0.75,
+                commentSentimentScore: 0.82,
+                hasComments: true,
+                contentDepthRaw: 0.77,
+                commentSentimentRaw: 0.40,
+                finalScore: 78,
+                videoTitle: "AI Unveiled",
+                positiveCommentThemes: ["Very informative"],
+                negativeCommentThemes: [],
+                contentHighlights: ["Explains the 4-phase AI adoption ladder."],
+                contentWatchouts: ["Glosses over implementation pitfalls."],
+                commentHighlights: ["Fans love the clear metrics section."],
+                commentWatchouts: ["Some say it repeats earlier content."],
+                spamRatio: 0.12,
+                commentsAnalyzed: 24
+            )
 // If a production fallback is needed, use the following:
 // vm.analysisResult = ContentAnalysis(
 //     summary: "",
@@ -2764,7 +2114,15 @@ struct RootView_Previews: PreviewProvider {
             vm.essentialsCommentAnalysis = CommentInsights(
                 videoId: "TestId",
                 
-                overallCommentSentimentScore: 0.6
+                overallCommentSentimentScore: 0.6,
+                contentDepthScore: 0.7,
+                suggestedQuestions: ["Best first step?", "Tools needed?", "Pitfalls to avoid?"],
+                contentHighlights: ["Shares concrete metrics for measuring ROI."],
+                contentGaps: ["Skips pricing details for small teams."],
+                commentHighlights: ["Viewers appreciate seeing real dashboards."],
+                commentWarnings: ["Some think the pacing is slow."],
+                spamRatio: 0.1,
+                commentsAnalyzed: 30
             )
         }
         if state == .showingAskAnything {
@@ -2827,32 +2185,3 @@ struct RootView_Previews: PreviewProvider {
     }
 }
 #endif
-
-
-
-// MARK: - Inline Paywall View
-
-fileprivate struct InlinePaywallView: View {
-    let context: MainViewModel.PaywallContext
-    let isInExtension: Bool
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.65)
-                .ignoresSafeArea()
-
-            ScrollView(showsIndicators: false) {
-                VStack {
-                    Spacer(minLength: 60)
-
-                    PaywallCard(context: context, isInExtension: isInExtension)
-                        .padding(.horizontal, 24)
-
-                    Spacer(minLength: 60)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .transition(.opacity)
-    }
-}

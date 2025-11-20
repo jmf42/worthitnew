@@ -141,7 +141,13 @@ struct WorthItTests {
             "viewerTips": ["Tip 1", "Tip 2"],
             "overallCommentSentimentScore": 0.75,
             "contentDepthScore": 0.85,
-            "suggestedQuestions": ["What is this about?", "How does it work?"]
+            "suggestedQuestions": ["What is this about?", "How does it work?"],
+            "contentHighlights": ["Explains the 3-step system"],
+            "contentGaps": ["No pricing guidance"],
+            "commentHighlights": ["Fans love the pacing"],
+            "commentWarnings": ["Some say it's rushed"],
+            "spamRatio": 0.15,
+            "commentsAnalyzed": 40
         }
         """
         
@@ -154,6 +160,12 @@ struct WorthItTests {
             #expect(insights.overallCommentSentimentScore == 0.75)
             #expect(insights.contentDepthScore == 0.85)
             #expect(insights.suggestedQuestions.count == 2)
+            #expect(insights.contentHighlights == ["Explains the 3-step system"])
+            #expect(insights.contentGaps == ["No pricing guidance"])
+            #expect(insights.commentHighlights == ["Fans love the pacing"])
+            #expect(insights.commentWarnings == ["Some say it's rushed"])
+            #expect(insights.spamRatio == 0.15)
+            #expect(insights.commentsAnalyzed == 40)
         } catch {
             #expect(false, "Failed to decode CommentInsights: \(error)")
         }
@@ -177,7 +189,13 @@ struct WorthItTests {
             finalScore: 75,
             videoTitle: "Test Video",
             positiveCommentThemes: ["Great content"],
-            negativeCommentThemes: ["Could be better"]
+            negativeCommentThemes: ["Could be better"],
+            contentHighlights: ["Detailed walkthrough"],
+            contentWatchouts: ["Light on pitfalls"],
+            commentHighlights: ["Viewers like the tone"],
+            commentWatchouts: ["Too many tangents"],
+            spamRatio: 0.2,
+            commentsAnalyzed: 15
         )
         
         #expect(breakdown.contentDepthScore == 0.8)
@@ -187,6 +205,10 @@ struct WorthItTests {
         #expect(breakdown.videoTitle == "Test Video")
         #expect(breakdown.positiveCommentThemes.count == 1)
         #expect(breakdown.negativeCommentThemes.count == 1)
+        #expect(breakdown.contentHighlights.count == 1)
+        #expect(breakdown.commentWatchouts.count == 1)
+        #expect(breakdown.spamRatio == 0.2)
+        #expect(breakdown.commentsAnalyzed == 15)
     }
     
     // MARK: - String Extensions Tests
