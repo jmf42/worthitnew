@@ -7,40 +7,6 @@ import SwiftUI
 import Combine
 import OSLog // For Logger
 
-struct TimeSavedEvent: Identifiable, Equatable {
-    let id = UUID()
-    let minutes: Double
-    let cumulativeMinutes: Double
-    let alreadyCounted: Bool
-    let context: TimeSavedContext?
-}
-
-struct TimeSavedContext: Equatable {
-    enum Kind: Equatable {
-        case milestone
-        case streak
-        case weeklyBest
-    }
-
-    let kind: Kind
-    let iconName: String
-    let chipText: String
-    let headline: String
-    let detail: String
-}
-
-private struct TimeSavedLogEntry: Codable, Equatable {
-    enum Source: String, Codable {
-        case mainApp
-        case shareExtension
-    }
-
-    let minutes: Double
-    let timestamp: Date
-    let videoId: String
-    let source: Source
-}
-
 @MainActor
 class MainViewModel: ObservableObject {
 
@@ -69,6 +35,8 @@ class MainViewModel: ObservableObject {
     @Published var decisionCardModel: DecisionCardModel?
     /// Flag to trigger the decision card overlay once per presentation
     @Published var shouldPromptDecisionCard: Bool = false
+    /// Tracks if the current video already displayed its decision card this session
+    @Published private(set) var hasShownDecisionCardForCurrentVideo: Bool = false
 
     @Published var qaMessages: [ChatMessage] = []
     @Published var qaInputText: String = ""
@@ -96,31 +64,6 @@ class MainViewModel: ObservableObject {
     private var cleanedTranscriptForLLM: String?
     private var transcriptForAnalysis: String?
 
-    @Published var latestTimeSavedEvent: TimeSavedEvent? {
-        didSet {
-            guard latestTimeSavedEvent?.id != oldValue?.id else { return }
-            if let event = latestTimeSavedEvent {
-                var extras: [String: Any] = [
-                    "minutes": event.minutes,
-                    "cumulative_minutes": event.cumulativeMinutes,
-                    "already_counted": event.alreadyCounted
-                ]
-                if let context = event.context {
-                    extras["context_kind"] = String(describing: context.kind)
-                }
-                Logger.shared.notice(
-                    "Time-saved event queued",
-                    category: .timeSavings,
-                    extra: extras
-                )
-            } else if oldValue != nil {
-                Logger.shared.debug("Time-saved event cleared", category: .timeSavings)
-            }
-        }
-    }
-    @Published private(set) var cumulativeTimeSavedMinutes: Double = 0
-    @Published private(set) var uniqueVideosSummarized: Int = 0
-
     private var activeAnalysisTask: Task<Void, Never>? = nil
     private var fullAnalysisTask: Task<Void, Never>? = nil
     private var minimumDisplayTimerTask: Task<Void, Never>? = nil
@@ -129,16 +72,9 @@ class MainViewModel: ObservableObject {
 
     private var processedVideoIDsThisSession = Set<String>()
 
-    private let totalTimeSavedKey = "com.worthitai.totalTimeSavedMinutes"
-    private let timeSavedVideoIDsKey = "com.worthitai.timeSavedVideoIDs"
-    private let lastDisplayedTimeSavedKey = "com.worthitai.lastDisplayedTimeSavedTotal"
-    private let timeSavedLogKey = "com.worthitai.timeSavedLog"
-    private let speechWordsPerMinute: Double = 200.0
     private let commentClassificationLimit = 50
     private let commentInsightsLimit = 25
-    private var timeSavedVideoIDs: Set<String> = []
-    private var timeSavedLogEntries: [TimeSavedLogEntry] = []
-    private let maxTimeSavedLogEntries = 200
+    private var decisionCardShownVideoIDs = Set<String>()
 
     // MARK: - Score breakdown presentation
     func requestScoreBreakdownPresentation() {
@@ -148,20 +84,10 @@ class MainViewModel: ObservableObject {
     func consumeScoreBreakdownRequest() {
         shouldPresentScoreBreakdown = false
     }
-    private let logRetentionDays = 120
-
-    private var appCalendar: Calendar = {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone.current
-        calendar.locale = Locale.current
-        return calendar
-    }()
-
     private let apiManager: APIManager
     private let cacheManager: CacheManager
     private let subscriptionManager: SubscriptionManager
     private let usageTracker: UsageTracker
-    private let sharedDefaults: UserDefaults
     private var cancellables = Set<AnyCancellable>()
     @Published private(set) var isUserSubscribed: Bool = false
     private var usageReservations: [String: Bool] = [:]
@@ -189,6 +115,20 @@ class MainViewModel: ObservableObject {
         }
     }
 
+    private func syncDecisionCardSeenState(for videoId: String?) {
+        guard let id = videoId else {
+            hasShownDecisionCardForCurrentVideo = false
+            return
+        }
+        hasShownDecisionCardForCurrentVideo = decisionCardShownVideoIDs.contains(id)
+    }
+
+    private func promptDecisionCardIfReady() {
+        guard decisionCardModel != nil,
+              !hasShownDecisionCardForCurrentVideo else { return }
+        shouldPromptDecisionCard = true
+    }
+
     // Streaming removed: we now render a skeleton until full analysis is ready
 
     init(apiManager: APIManager, cacheManager: CacheManager, subscriptionManager: SubscriptionManager, usageTracker: UsageTracker) {
@@ -196,24 +136,8 @@ class MainViewModel: ObservableObject {
         self.cacheManager = cacheManager
         self.subscriptionManager = subscriptionManager
         self.usageTracker = usageTracker
-        self.sharedDefaults = UserDefaults(suiteName: AppConstants.appGroupID) ?? .standard
         self.isUserSubscribed = subscriptionManager.isSubscribed
         Logger.shared.info("MainViewModel initialized.", category: .lifecycle)
-        self.cumulativeTimeSavedMinutes = sharedDefaults.double(forKey: totalTimeSavedKey)
-        if let storedIDs = sharedDefaults.array(forKey: timeSavedVideoIDsKey) as? [String] {
-            self.timeSavedVideoIDs = Set(storedIDs)
-        }
-        self.uniqueVideosSummarized = timeSavedVideoIDs.count
-        self.timeSavedLogEntries = loadTimeSavedLogFromDefaults()
-        pruneTimeSavedLogIfNeeded()
-        persistTimeSavedLogIfNeeded()
-
-        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification, object: sharedDefaults)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.syncTimeSavedMetricsFromSharedDefaults(presentEventIfNeeded: false)
-            }
-            .store(in: &cancellables)
 
         subscriptionManager.$status
             .receive(on: RunLoop.main)
@@ -248,8 +172,20 @@ class MainViewModel: ObservableObject {
         return result
     }
 
-    // Clip each takeaway to a maximum word count (non-destructive for shorter ones)
-    
+    /// Trim empties and dedupe text while preserving order (case-insensitive)
+    private func uniqueNonEmpty(_ items: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in items {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let key = trimmed.lowercased()
+            if seen.insert(key).inserted {
+                result.append(trimmed)
+            }
+        }
+        return result
+    }
 
     private func releaseUsageReservation(for videoId: String, revertIfNeeded: Bool) {
         guard let wasCounted = usageReservations.removeValue(forKey: videoId) else { return }
@@ -326,6 +262,7 @@ class MainViewModel: ObservableObject {
         resetForNewAnalysis()
 
         self.currentVideoID = videoId
+        syncDecisionCardSeenState(for: videoId)
         self.currentVideoThumbnailURL = URL(string: "https://i.ytimg.com/vi/\(videoId)/hq720.jpg")
         latestUsageSnapshot = allowanceSnapshot
         usageReservations[videoId] = isUserSubscribed ? false : reservationWasCounted
@@ -544,6 +481,7 @@ class MainViewModel: ObservableObject {
         resetForNewAnalysis()
 
         self.currentVideoID = videoId
+        syncDecisionCardSeenState(for: videoId)
 
         let cache = cacheManager
 
@@ -628,6 +566,7 @@ class MainViewModel: ObservableObject {
         self.calculateAndSetWorthItScore()
         self.processingProgress = 1.0
         self.viewState = .showingInitialOptions
+        promptDecisionCardIfReady()
         processedVideoIDsThisSession.insert(videoId)
     }
 
@@ -723,11 +662,6 @@ class MainViewModel: ObservableObject {
             self.currentVideoTitle = resolvedTitle
             self.currentVideoThumbnailURL = URL(string: contentAnalysisData.videoThumbnailUrl ?? "https://i.ytimg.com/vi/\(videoId)/hqdefault.jpg")
             await cache.saveContentAnalysis(contentAnalysisData, for: videoId)
-            self.recordTimeSavedIfNeeded(
-                for: videoId,
-                transcript: self.rawTranscript ?? transcript,
-                videoDurationSeconds: contentAnalysisData.videoDurationSeconds
-            )
 
             if commentClassificationFailed {
                 AnalyticsService.shared.logCommentsNotFound(videoId: videoId)
@@ -763,8 +697,9 @@ class MainViewModel: ObservableObject {
             }
 
             // Score
-            self.calculateAndSetWorthItScore()
-            self.refreshDecisionCardIfPossible(videoId: videoId)
+        self.calculateAndSetWorthItScore()
+        self.refreshDecisionCardIfPossible(videoId: videoId)
+        self.promptDecisionCardIfReady()
 
             // Done
             self.updateProgress(1.0, message: "Analysis Complete")
@@ -778,6 +713,7 @@ class MainViewModel: ObservableObject {
                 if self.currentScreenOverride != .showingAskAnything &&
                    self.currentScreenOverride != .showingEssentials {
                     self.viewState = .showingInitialOptions
+                    self.promptDecisionCardIfReady()
                 }
             }
             releaseUsageReservation(for: videoId, revertIfNeeded: false)
@@ -824,311 +760,53 @@ class MainViewModel: ObservableObject {
         return comments
     }
 
-    private func recordTimeSavedIfNeeded(for videoId: String, transcript: String, videoDurationSeconds: Int?, source: TimeSavedLogEntry.Source = .mainApp) {
-        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTranscript.isEmpty else { return }
-        let wordCount = trimmedTranscript.split { $0.isWhitespace || $0.isNewline }.count
-        guard wordCount > 0 else { return }
-
-        var estimatedMinutes = max(Double(wordCount) / speechWordsPerMinute, 0.1)
-        if let videoDurationSeconds, videoDurationSeconds > 0 {
-            let videoMinutes = max(Double(videoDurationSeconds) / 60.0, 0.1)
-            estimatedMinutes = min(estimatedMinutes, max(videoMinutes * 0.95, videoMinutes - 0.5, 0.1))
-        }
-        let roundedMinutes = max((estimatedMinutes * 10).rounded() / 10.0, 0.1)
-        let alreadyCounted = timeSavedVideoIDs.contains(videoId)
-
-        var updatedTotal = cumulativeTimeSavedMinutes
-        let previousTotal = cumulativeTimeSavedMinutes
-        var context: TimeSavedContext? = nil
-        let effectiveSource: TimeSavedLogEntry.Source = isRunningInExtension ? .shareExtension : source
-        if !alreadyCounted {
-            updatedTotal = max((updatedTotal + roundedMinutes) * 10, 0).rounded() / 10.0
-            timeSavedVideoIDs.insert(videoId)
-            sharedDefaults.set(Array(timeSavedVideoIDs), forKey: timeSavedVideoIDsKey)
-            sharedDefaults.set(updatedTotal, forKey: totalTimeSavedKey)
-            cumulativeTimeSavedMinutes = updatedTotal
-            uniqueVideosSummarized = timeSavedVideoIDs.count
-
-            let logEntry = TimeSavedLogEntry(
-                minutes: roundedMinutes,
-                timestamp: Date(),
-                videoId: videoId,
-                source: effectiveSource
-            )
-            context = registerTimeSavedLogEntry(logEntry, previousTotal: previousTotal, newTotal: updatedTotal)
-        }
-
-        let totalMinutes = alreadyCounted ? cumulativeTimeSavedMinutes : updatedTotal
-        let event = TimeSavedEvent(
-            minutes: roundedMinutes,
-            cumulativeMinutes: totalMinutes,
-            alreadyCounted: alreadyCounted,
-            context: alreadyCounted ? nil : context
-        )
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            latestTimeSavedEvent = event
-        }
-        updateLastDisplayedTimeSaved(to: totalMinutes)
-        AnalyticsService.shared.logEvent(
-            "time_saved_recorded",
-            parameters: [
-                "video_id": videoId,
-                "minutes": roundedMinutes,
-                "already_counted": alreadyCounted
-            ]
-        )
-    }
-
-    private func lastDisplayedTimeSavedTotal() -> Double {
-        sharedDefaults.double(forKey: lastDisplayedTimeSavedKey)
-    }
-
-    private func updateLastDisplayedTimeSaved(to value: Double) {
-        sharedDefaults.set(value, forKey: lastDisplayedTimeSavedKey)
-    }
-
-    func syncTimeSavedMetricsFromSharedDefaults(presentEventIfNeeded: Bool = true) {
-        let storedTotal = sharedDefaults.double(forKey: totalTimeSavedKey)
-        let storedIDs = Set((sharedDefaults.array(forKey: timeSavedVideoIDsKey) as? [String]) ?? [])
-        let storedLog = loadTimeSavedLogFromDefaults()
-
-        let previousTotal = cumulativeTimeSavedMinutes
-
-        timeSavedVideoIDs = storedIDs
-        cumulativeTimeSavedMinutes = storedTotal
-        uniqueVideosSummarized = storedIDs.count
-        timeSavedLogEntries = storedLog
-
-        guard presentEventIfNeeded else {
-            updateLastDisplayedTimeSaved(to: storedTotal)
-            return
-        }
-
-        let lastDisplayed = lastDisplayedTimeSavedTotal()
-        let deltaRaw = storedTotal - lastDisplayed
-        let roundedDelta = (deltaRaw * 10).rounded() / 10.0
-
-        guard roundedDelta > 0.049 else {
-            if previousTotal != storedTotal {
-                updateLastDisplayedTimeSaved(to: storedTotal)
-            }
-            return
-        }
-
-        let context = contextFromSyncedLog(deltaMinutes: roundedDelta, newTotal: storedTotal)
-
-        let event = TimeSavedEvent(
-            minutes: roundedDelta,
-            cumulativeMinutes: storedTotal,
-            alreadyCounted: false,
-            context: context
-        )
-
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            latestTimeSavedEvent = event
-        }
-        updateLastDisplayedTimeSaved(to: storedTotal)
-    }
-
-    private func appendToTimeSavedLog(_ entry: TimeSavedLogEntry) {
-        timeSavedLogEntries.append(entry)
-        timeSavedLogEntries.sort { $0.timestamp < $1.timestamp }
-    }
-
-    private func pruneTimeSavedLogIfNeeded() {
-        let cutoff = appCalendar.date(byAdding: .day, value: -logRetentionDays, to: Date()) ?? Date()
-        timeSavedLogEntries = timeSavedLogEntries.filter { $0.timestamp >= cutoff }
-        if timeSavedLogEntries.count > maxTimeSavedLogEntries {
-            timeSavedLogEntries = Array(timeSavedLogEntries.suffix(maxTimeSavedLogEntries))
-        }
-    }
-
-    private func persistTimeSavedLogIfNeeded() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .millisecondsSince1970
-        do {
-            let data = try encoder.encode(timeSavedLogEntries)
-            if sharedDefaults.data(forKey: timeSavedLogKey) != data {
-                sharedDefaults.set(data, forKey: timeSavedLogKey)
-            }
-        } catch {
-            Logger.shared.error("Failed to persist time saved log: \(error.localizedDescription)", category: .services, error: error)
-        }
-    }
-
-    private func loadTimeSavedLogFromDefaults() -> [TimeSavedLogEntry] {
-        guard let data = sharedDefaults.data(forKey: timeSavedLogKey) else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .millisecondsSince1970
-        do {
-            var entries = try decoder.decode([TimeSavedLogEntry].self, from: data)
-            entries.sort { $0.timestamp < $1.timestamp }
-            let cutoff = appCalendar.date(byAdding: .day, value: -logRetentionDays, to: Date()) ?? Date()
-            entries = entries.filter { $0.timestamp >= cutoff }
-            if entries.count > maxTimeSavedLogEntries {
-                entries = Array(entries.suffix(maxTimeSavedLogEntries))
-            }
-            return entries
-        } catch {
-            Logger.shared.error("Failed to decode time saved log: \(error.localizedDescription)", category: .services, error: error)
-            return []
-        }
-    }
-
-    private func contextFromSyncedLog(deltaMinutes: Double, newTotal: Double) -> TimeSavedContext? {
-        guard let lastEntry = timeSavedLogEntries.last else { return nil }
-        let previousTotal = max(newTotal - deltaMinutes, 0)
-        return determineContext(for: lastEntry, previousTotal: previousTotal, newTotal: newTotal)
-    }
-
-    private func registerTimeSavedLogEntry(_ entry: TimeSavedLogEntry, previousTotal: Double, newTotal: Double) -> TimeSavedContext? {
-        appendToTimeSavedLog(entry)
-        pruneTimeSavedLogIfNeeded()
-        let context = determineContext(for: entry, previousTotal: previousTotal, newTotal: newTotal)
-        persistTimeSavedLogIfNeeded()
-        var extras: [String: Any] = [
-            "minutes": entry.minutes,
-            "source": entry.source.rawValue,
-            "new_total": newTotal,
-            "previous_total": previousTotal
-        ]
-        if let context {
-            extras["context"] = String(describing: context.kind)
-        }
-        Logger.shared.info("Time-saved log entry recorded", category: .timeSavings, extra: extras)
-        return context
-    }
-
-    private func determineContext(for entry: TimeSavedLogEntry, previousTotal: Double, newTotal: Double) -> TimeSavedContext? {
-        if let milestone = milestoneContext(previousTotal: previousTotal, newTotal: newTotal) {
-            return milestone
-        }
-        if let streak = streakContext(for: entry) {
-            return streak
-        }
-        if let weekly = weeklyBestContext(for: entry) {
-            return weekly
-        }
-        return nil
-    }
-
-    private func milestoneContext(previousTotal: Double, newTotal: Double) -> TimeSavedContext? {
-        let thresholdsMinutes: [Double] = [30, 60, 120, 180, 300, 480, 720, 960, 1200, 1440, 1800, 2400, 3000]
-        for threshold in thresholdsMinutes.sorted() {
-            if previousTotal < threshold && newTotal >= threshold {
-                let formatted = formatMilestoneMinutes(threshold)
-                return TimeSavedContext(
-                    kind: .milestone,
-                    iconName: "flag.fill",
-                    chipText: formatted,
-                    headline: "🎯 Milestone unlocked",
-                    detail: "Total stash hit \(formatted)"
-                )
-            }
-        }
-        return nil
-    }
-
-    private func streakContext(for entry: TimeSavedLogEntry) -> TimeSavedContext? {
-        let calendar = appCalendar
-        let dayStart = calendar.startOfDay(for: entry.timestamp)
-
-        let hasEarlierSameDay = timeSavedLogEntries.contains {
-            calendar.isDate($0.timestamp, inSameDayAs: entry.timestamp) &&
-            $0.timestamp < entry.timestamp
-        }
-        guard !hasEarlierSameDay else { return nil }
-
-        var streakCount = 0
-        var cursor = dayStart
-        while timeSavedLogEntries.contains(where: { calendar.isDate($0.timestamp, inSameDayAs: cursor) }) {
-            streakCount += 1
-            guard let previous = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
-            cursor = calendar.startOfDay(for: previous)
-        }
-
-        guard streakCount >= 3 else { return nil }
-        let chip = "Day \(streakCount)"
-        let detail = streakCount >= 7 ? "🔥 On a \(streakCount)-day heater" : "Day \(streakCount) in a row"
-        let headline = streakCount >= 7 ? "🔥 Streak on fire" : "🔥 Streak in motion"
-        return TimeSavedContext(
-            kind: .streak,
-            iconName: "flame.fill",
-            chipText: chip,
-            headline: headline,
-            detail: detail
-        )
-    }
-
-    private func weeklyBestContext(for entry: TimeSavedLogEntry) -> TimeSavedContext? {
-        let calendar = appCalendar
-        let targetWeek = calendar.component(.weekOfYear, from: entry.timestamp)
-        let targetYear = calendar.component(.yearForWeekOfYear, from: entry.timestamp)
-
-        let weekEntries = timeSavedLogEntries.filter {
-            calendar.component(.weekOfYear, from: $0.timestamp) == targetWeek &&
-            calendar.component(.yearForWeekOfYear, from: $0.timestamp) == targetYear
-        }
-
-        let earlierSameDay = weekEntries.contains {
-            calendar.isDate($0.timestamp, inSameDayAs: entry.timestamp) &&
-            $0.timestamp < entry.timestamp
-        }
-        guard !earlierSameDay else { return nil }
-
-        var previousBest: Double = 0
-        for item in weekEntries where item.timestamp < entry.timestamp {
-            previousBest = max(previousBest, item.minutes)
-        }
-
-        guard previousBest > 0, entry.minutes >= previousBest + 0.1 else { return nil }
-        let chip = "Weekly best"
-        let detail = "New high: \(formatMinutesShort(entry.minutes))"
-        return TimeSavedContext(
-            kind: .weeklyBest,
-            iconName: "crown.fill",
-            chipText: chip,
-            headline: "🏆 Weekly best!",
-            detail: detail
-        )
-    }
-
-    private func formatMinutesShort(_ minutes: Double) -> String {
-        if minutes >= 60 {
-            let hours = minutes / 60.0
-            return String(format: "%.1fh", hours)
-        } else if minutes >= 10 {
-            return "\(Int(minutes.rounded())) min"
-        } else {
-            return String(format: "%.1f min", minutes)
-        }
-    }
-
-    private func formatMilestoneMinutes(_ minutes: Double) -> String {
-        if minutes.truncatingRemainder(dividingBy: 60) == 0, minutes >= 60 {
-            let hours = Int(minutes / 60)
-            return "\(hours)h"
-        }
-        return formatMinutesShort(minutes)
-    }
-
-    func clearTimeSavedEvent() {
-        latestTimeSavedEvent = nil
-    }
-
     // MARK: - Decision Card helpers
     func presentDecisionCard(_ model: DecisionCardModel) {
         decisionCardModel = model
-        shouldPromptDecisionCard = true
+        if let videoId = currentVideoID, decisionCardShownVideoIDs.contains(videoId) {
+            hasShownDecisionCardForCurrentVideo = true
+            shouldPromptDecisionCard = false
+        } else {
+            shouldPromptDecisionCard = true
+        }
     }
 
     func consumeDecisionCardPrompt() {
         shouldPromptDecisionCard = false
     }
 
+    func markDecisionCardShownIfNeeded() {
+        guard let videoId = currentVideoID else { return }
+        decisionCardShownVideoIDs.insert(videoId)
+        hasShownDecisionCardForCurrentVideo = true
+    }
+
     private func calculateAndSetWorthItScore() {
         let depthNormalized = essentialsCommentAnalysis?.contentDepthScore ?? 0.6 // rough transcript-only heuristic
+        let takeaways = analysisResult?.takeaways ?? []
+        let gems = analysisResult?.gemsOfWisdom ?? []
+        var contentHighlights = uniqueNonEmpty(takeaways + gems)
+        var contentWatchouts: [String] = []
+
+        let positiveThemes = analysisResult?.topThemes?.filter { ($0.sentimentScore ?? 0) > 0.1 }.map { $0.theme } ?? []
+        let negativeThemes = analysisResult?.topThemes?.filter { ($0.sentimentScore ?? 0) < -0.1 }.map { $0.theme } ?? []
+        var commentHighlights = uniqueNonEmpty(positiveThemes)
+        var commentWatchouts = uniqueNonEmpty(negativeThemes)
+
+        if let sentimentSummary = analysisResult?.CommentssentimentSummary, !sentimentSummary.isEmpty {
+            commentHighlights.insert(sentimentSummary, at: 0)
+        }
+        let categorized = analysisResult?.categorizedComments ?? []
+        let spamRatio: Double? = {
+            guard !categorized.isEmpty else { return nil }
+            let spamCount = categorized.filter { $0.category == "spam" }.count
+            return Double(spamCount) / Double(categorized.count)
+        }()
+        let commentsAnalyzedCount: Int? = {
+            if !llmAnalyzedComments.isEmpty { return llmAnalyzedComments.count }
+            if !categorized.isEmpty { return categorized.count }
+            return analysisResult?.topThemes?.count
+        }()
 
         if let commentData = essentialsCommentAnalysis {
             // Normal calculation (with comments)
@@ -1148,8 +826,30 @@ class MainViewModel: ObservableObject {
             let roundedScore = round(finalScoreValue * 100)
 
             self.worthItScore = roundedScore
-            let positiveThemes = analysisResult?.topThemes?.filter { ($0.sentimentScore ?? 0) > 0.1 }.map { $0.theme } ?? []
-            let negativeThemes = analysisResult?.topThemes?.filter { ($0.sentimentScore ?? 0) < -0.1 }.map { $0.theme } ?? []
+            if let reasons = commentData.decisionReasons {
+                commentHighlights.append(contentsOf: reasons)
+            }
+            if let tips = commentData.viewerTips {
+                commentHighlights.append(contentsOf: tips)
+            }
+            if let learnings = commentData.decisionLearnings {
+                contentHighlights.append(contentsOf: learnings)
+            }
+            if let bestMoment = commentData.decisionBestMoment, !bestMoment.isEmpty {
+                contentHighlights.append("Best moment: \(bestMoment)")
+            }
+            if let skipNote = commentData.decisionSkip, !skipNote.isEmpty {
+                contentWatchouts.append(skipNote)
+                commentWatchouts.append(skipNote)
+            }
+            if let signalQuality = commentData.signalQualityNote, !signalQuality.isEmpty {
+                commentWatchouts.append(signalQuality)
+            }
+            contentHighlights = uniqueNonEmpty(contentHighlights)
+            contentWatchouts = uniqueNonEmpty(contentWatchouts)
+            commentHighlights = uniqueNonEmpty(commentHighlights)
+            commentWatchouts = uniqueNonEmpty(commentWatchouts)
+
             self.scoreBreakdownDetails = ScoreBreakdown(
                 contentDepthScore: depthNormalized,
                 commentSentimentScore: commentSentimentNormalized,
@@ -1160,17 +860,18 @@ class MainViewModel: ObservableObject {
                 videoTitle: analysisResult?.videoTitle ?? currentVideoTitle ?? "Video",
                 positiveCommentThemes: positiveThemes,
                 negativeCommentThemes: negativeThemes,
-                contentHighlights: analysisResult?.takeaways ?? [],
-                contentWatchouts: [],
-                commentHighlights: positiveThemes,
-                commentWatchouts: negativeThemes,
-                spamRatio: nil,
-                commentsAnalyzed: analysisResult?.topThemes?.count
+                contentHighlights: contentHighlights,
+                contentWatchouts: contentWatchouts,
+                commentHighlights: commentHighlights,
+                commentWatchouts: commentWatchouts,
+                spamRatio: spamRatio,
+                commentsAnalyzed: commentsAnalyzedCount
             )
         } else {
             // PATCH: No comments, score is 100% content depth
             let roundedScore = round(depthNormalized * 100)
             self.worthItScore = roundedScore
+            contentHighlights = uniqueNonEmpty(contentHighlights)
             self.scoreBreakdownDetails = ScoreBreakdown(
                 contentDepthScore: depthNormalized,
                 commentSentimentScore: 0.0,
@@ -1179,34 +880,41 @@ class MainViewModel: ObservableObject {
                 commentSentimentRaw: 0.0,
                 finalScore: roundedScore,
                 videoTitle: analysisResult?.videoTitle ?? currentVideoTitle ?? "Video",
-                positiveCommentThemes: [],
-                negativeCommentThemes: [],
-                contentHighlights: analysisResult?.takeaways ?? [],
-                contentWatchouts: [],
-                commentHighlights: [],
-                commentWatchouts: [],
-                spamRatio: nil,
-                commentsAnalyzed: nil
+                positiveCommentThemes: positiveThemes,
+                negativeCommentThemes: negativeThemes,
+                contentHighlights: contentHighlights,
+                contentWatchouts: contentWatchouts,
+                commentHighlights: commentHighlights,
+                commentWatchouts: commentWatchouts,
+                spamRatio: spamRatio,
+                commentsAnalyzed: commentsAnalyzedCount
             )
         }
 
         Logger.shared.info("Worth-It Score calculated: \(self.worthItScore ?? -1). Depth: \(depthNormalized), Comment Sentiment: \(essentialsCommentAnalysis?.overallCommentSentimentScore ?? 0)", category: .services)
+
+        if let videoId = currentVideoID {
+            refreshDecisionCardIfPossible(videoId: videoId)
+        }
     }
 
     // MARK: - Decision Card Construction
     private func refreshDecisionCardIfPossible(videoId: String) {
-        guard viewState == .showingInitialOptions else { return }
-        guard let analysis = analysisResult else { return }
-        // Avoid re-presenting if a card is already set
-        guard decisionCardModel == nil else { return }
+        // Allow a provisional card as soon as comment insights land; fall back to transcript takeaways when available.
+        guard analysisResult != nil || essentialsCommentAnalysis != nil else { return }
 
         let resolvedScore = worthItScore ?? 0
-        let verdict = verdictForScore(resolvedScore)
-        let confidence = confidenceForData()
+        let decision = essentialsCommentAnalysis
+        let analysis = analysisResult
+        let verdict = decisionVerdict(from: decision?.decisionVerdict) ?? verdictForScore(resolvedScore)
+        let confidence = decisionConfidenceLevel(from: decision?.decisionConfidence) ?? confidenceForData()
 
         let depthDetail: String = {
-            if let takeaway = analysis.takeaways?.first, !takeaway.isEmpty {
-                return takeaway
+            if let reason = decision?.decisionReasons.first, !reason.isEmpty {
+                return truncateForCard(reason, max: 110)
+            }
+            if let takeaway = analysis?.takeaways?.first, !takeaway.isEmpty {
+                return truncateForCard(takeaway, max: 110)
             }
             let depthPercent = Int((essentialsCommentAnalysis?.contentDepthScore ?? 0) * 100)
             return depthPercent > 0 ? "Depth: \(depthPercent)%" : "Depth insights ready"
@@ -1218,8 +926,13 @@ class MainViewModel: ObservableObject {
         if let sent = sentimentPercent {
             commentsDetail = "\(commentsDetail) · Sentiment \(sent)%"
         }
+        if let quality = decision?.signalQualityNote, !quality.isEmpty {
+            commentsDetail = quality
+        }
+        commentsDetail = truncateForCard(commentsDetail, max: 110)
 
-        let jumpDetail = "Jump available soon"
+        let jumpDetail = truncateForCard(decision?.decisionBestMoment ?? "Best moment coming soon", max: 110)
+        let bestStart = parseBestMomentSeconds(from: decision?.decisionBestMoment)
 
         let depthChip = DecisionProofChip(
             iconName: "doc.text.magnifyingglass",
@@ -1239,9 +952,9 @@ class MainViewModel: ObservableObject {
             detail: jumpDetail
         )
 
-        let reasonText = analysis.takeaways?.first ?? "Your Worth-It verdict is ready."
+        let reasonText = truncateForCard(decision?.decisionReasons.first ?? analysis?.takeaways?.first ?? "Your Worth-It verdict is ready.", max: 140)
         let model = DecisionCardModel(
-            title: analysis.videoTitle ?? currentVideoTitle ?? "Video",
+            title: analysis?.videoTitle ?? currentVideoTitle ?? "Video",
             reason: reasonText,
             score: resolvedScore,
             depthChip: depthChip,
@@ -1251,7 +964,11 @@ class MainViewModel: ObservableObject {
             confidence: confidence,
             timeValue: nil,
             thumbnailURL: currentVideoThumbnailURL,
-            bestStartSeconds: nil
+            bestStartSeconds: bestStart,
+            learnings: (decision?.decisionLearnings ?? analysis?.takeaways ?? []).prefix(2).map { $0 },
+            skipNote: decision?.decisionSkip,
+            signalQuality: decision?.signalQualityNote,
+            topQuestion: suggestedQuestions.first
         )
 
         presentDecisionCard(model)
@@ -1263,6 +980,14 @@ class MainViewModel: ObservableObject {
         return .maybe
     }
 
+    private func decisionVerdict(from string: String?) -> DecisionVerdict? {
+        guard let raw = string?.lowercased() else { return nil }
+        if raw.contains("worth") { return .worthIt }
+        if raw.contains("skip") { return .skip }
+        if raw.contains("border") { return .maybe }
+        return nil
+    }
+
     private func confidenceForData() -> DecisionConfidence {
         if !llmAnalyzedComments.isEmpty, analysisResult != nil {
             return DecisionConfidence(level: .high)
@@ -1271,6 +996,31 @@ class MainViewModel: ObservableObject {
             return DecisionConfidence(level: .medium)
         }
         return DecisionConfidence(level: .low)
+    }
+
+    private func parseBestMomentSeconds(from text: String?) -> Int? {
+        guard let t = text else { return nil }
+        // Expect formats like "mm:ss — ..." or "m:ss"
+        let parts = t.split(separator: " ").first ?? ""
+        let timeParts = parts.split(separator: ":")
+        guard timeParts.count == 2,
+              let minutes = Int(timeParts[0]),
+              let seconds = Int(timeParts[1]),
+              seconds >= 0, seconds < 60 else { return nil }
+        return minutes * 60 + seconds
+    }
+
+    private func decisionConfidenceLevel(from value: Double?) -> DecisionConfidence? {
+        guard let v = value else { return nil }
+        if v >= 0.7 { return DecisionConfidence(level: .high) }
+        if v >= 0.45 { return DecisionConfidence(level: .medium) }
+        return DecisionConfidence(level: .low)
+    }
+
+    private func truncateForCard(_ text: String, max: Int) -> String {
+        guard text.count > max else { return text }
+        let endIndex = text.index(text.startIndex, offsetBy: max)
+        return text[text.startIndex..<endIndex].trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
     
@@ -1319,6 +1069,18 @@ class MainViewModel: ObservableObject {
                 qaMessages.append(ChatMessage(content: "Hi! What would you like to know about this video?", isUser: false))
             }
             viewState = .showingAskAnything
+        }
+    }
+
+    func askTopQuestionIfAvailable(_ question: String?) {
+        Task { @MainActor in
+            guard let prompt = question, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                requestAskAnything()
+                return
+            }
+            qaInputText = prompt
+            requestAskAnything()
+            sendQAQuestion()
         }
     }
 
@@ -1458,6 +1220,8 @@ class MainViewModel: ObservableObject {
         worthItScore = nil
         scoreBreakdownDetails = nil
         essentialsCommentAnalysis = nil
+        decisionCardModel = nil
+        shouldPromptDecisionCard = false
         qaMessages = []
         qaInputText = ""
         isQaLoading = false
@@ -1468,7 +1232,7 @@ class MainViewModel: ObservableObject {
         rawTranscript = nil
         transcriptForAnalysis = nil
         cleanedTranscriptForLLM = nil
-        latestTimeSavedEvent = nil
+        hasShownDecisionCardForCurrentVideo = false
 
         // Clear categorized comments
         funnyComments = []

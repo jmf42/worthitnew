@@ -4,11 +4,24 @@ import SwiftUI
 struct RecentVideosCenterModal: View {
     let onDismiss: () -> Void
     let onSelect: (CacheManager.RecentAnalysisItem) -> Void
+    let initialItems: [CacheManager.RecentAnalysisItem]?
     @State private var items: [CacheManager.RecentAnalysisItem] = []
     @State private var showContent = false
     @State private var dragOffset: CGFloat = 0
     @State private var isDismissing = false
     let borderGradient: LinearGradient
+    
+    init(
+        onDismiss: @escaping () -> Void,
+        onSelect: @escaping (CacheManager.RecentAnalysisItem) -> Void,
+        initialItems: [CacheManager.RecentAnalysisItem]? = nil,
+        borderGradient: LinearGradient
+    ) {
+        self.onDismiss = onDismiss
+        self.onSelect = onSelect
+        self.initialItems = initialItems
+        self.borderGradient = borderGradient
+    }
 
     // MARK: - Sort & Stats helpers
     private enum SortOption: String, CaseIterable, Identifiable {
@@ -98,17 +111,18 @@ struct RecentVideosCenterModal: View {
 
     private func cardBody(safeAreaInsets: EdgeInsets) -> some View {
         let horizontalInset = max(12, max(safeAreaInsets.leading, safeAreaInsets.trailing))
-        let contentTopPadding = safeAreaInsets.top + 32
+        let navBarHeight: CGFloat = 52
 
-        return ZStack(alignment: .topLeading) {
+        return ZStack(alignment: .top) {
             ScrollView(showsIndicators: false) {
                 cardContent
                     .padding(.horizontal, horizontalInset)
-                    .padding(.top, contentTopPadding)
+                    // Include safe area inset so content sits just below the custom toolbar
+                    .padding(.top, navBarHeight + safeAreaInsets.top + 12)
                     .padding(.bottom, safeAreaInsets.bottom + 24)
             }
 
-            topBar(safeAreaInsets: safeAreaInsets)
+            topNavBar(safeAreaInsets: safeAreaInsets, height: navBarHeight)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .offset(x: dragOffset)
@@ -118,8 +132,12 @@ struct RecentVideosCenterModal: View {
             dragOffset = 0
             isDismissing = false
             withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { showContent = true }
-            Task { @MainActor in
-                items = await CacheManager.shared.listRecentAnalyses()
+            if let seededItems = initialItems {
+                items = seededItems
+            } else {
+                Task { @MainActor in
+                    items = await CacheManager.shared.listRecentAnalyses()
+                }
             }
         }
         .gesture(
@@ -148,130 +166,90 @@ struct RecentVideosCenterModal: View {
         )
     }
 
-    private func topBar(safeAreaInsets: EdgeInsets) -> some View {
-        let leadingInset = max(16, safeAreaInsets.leading + 6)
-        let trailingInset = max(16, safeAreaInsets.trailing + 6)
+    private func topNavBar(safeAreaInsets: EdgeInsets, height: CGFloat) -> some View {
+        let horizontalInset = max(16, max(safeAreaInsets.leading, safeAreaInsets.trailing) + 6)
 
-        return HStack(spacing: 0) {
-            Button(action: { dismiss(haptic: false) }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text("Back")
-                        .font(Theme.Font.subheadline.weight(.medium))
+        return VStack(spacing: 0) {
+            ZStack {
+                HStack {
+                    Button(action: { dismiss(haptic: false) }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 17, weight: .semibold))
+                            Text("Back")
+                                .font(.system(size: 17))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(Theme.Color.primaryText)
+
+                    Spacer()
                 }
-                .foregroundColor(Theme.Color.accent)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Theme.Color.sectionBackground.opacity(0.7))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Theme.Color.primaryText.opacity(0.08), lineWidth: 0.8)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(borderGradient.opacity(0.35), lineWidth: 0.8)
-                        .blendMode(.overlay)
-                )
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+
+                WorthItToolbarTitle()
             }
-            Spacer()
+            .padding(.horizontal, horizontalInset)
+            .frame(height: height + safeAreaInsets.top, alignment: .bottom)
         }
-        .padding(.top, safeAreaInsets.top + 4)
-        .padding(.leading, leadingInset)
-        .padding(.trailing, trailingInset)
-        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .background(
+            Theme.Color.darkBackground.opacity(0.92)
+                .overlay(Theme.Gradient.vignette.opacity(0.25))
+                .ignoresSafeArea(edges: .top)
+        )
+        .shadow(color: .black.opacity(0.24), radius: 10, y: 6)
     }
 
     private var cardContent: some View {
         VStack(spacing: 0) {
             headerSection
-            Divider()
-                .background(Theme.Color.accent.opacity(0.12))
-                .padding(.horizontal, 24)
-            statsSection
             sortSection
             listSection
         }
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(Theme.Color.sectionBackground.opacity(0.82))
+                .fill(Theme.Color.sectionBackground.opacity(0.8))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .stroke(Theme.Color.primaryText.opacity(0.06), lineWidth: 1)
+                .stroke(borderGradient.opacity(0.7), lineWidth: 0.8)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .stroke(borderGradient, lineWidth: 0.8)
-                .blendMode(.overlay)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 16, y: 10)
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
     }
 
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(Theme.Gradient.appBluePurple)
-                        .frame(width: 52, height: 52)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
-                                .shadow(color: Theme.Color.accent.opacity(0.45), radius: 12, y: 6)
-                        )
-
-                    Image(systemName: "play.rectangle.fill")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Recent Videos")
-                        .font(Theme.Font.title3.weight(.bold))
-                        .foregroundColor(Theme.Color.primaryText)
-
-                    Text("Jump back into your latest WorthIt insights.")
-                        .font(Theme.Font.subheadline)
-                        .foregroundColor(Theme.Color.secondaryText.opacity(0.92))
-                }
-
+                RecentVideosHeaderLabel()
                 Spacer()
             }
 
+            statsRow
+
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Theme.Color.sectionBackground.opacity(0.6))
+                .fill(Theme.Color.sectionBackground.opacity(0.35))
+                .frame(height: 2)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
-                )
-                .frame(height: 3)
-                .overlay(
-                    LinearGradient(colors: [Theme.Color.accent.opacity(0.8), Theme.Color.purple.opacity(0.6)], startPoint: .leading, endPoint: .trailing)
-                        .frame(height: 3)
+                    LinearGradient(colors: [Theme.Color.accent.opacity(0.75), Theme.Color.purple.opacity(0.55)], startPoint: .leading, endPoint: .trailing)
+                        .frame(height: 2)
                         .cornerRadius(999)
                 )
-                .opacity(0.9)
         }
         .padding(.horizontal, 24)
-        .padding(.top, 28)
-        .padding(.bottom, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
     }
 
-    private var statsSection: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 6) {
+    private var statsRow: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Your latest insights")
+                    .font(Theme.Font.captionBold)
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
+                Text("\(items.count) videos analyzed")
                     .font(Theme.Font.subheadline.weight(.semibold))
                     .foregroundColor(Theme.Color.primaryText)
-                Text("\(items.count) videos analyzed")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Color.secondaryText)
                 if let updated = lastUpdatedRelative {
                     Text("Updated \(updated)")
                         .font(Theme.Font.caption)
@@ -282,18 +260,13 @@ struct RecentVideosCenterModal: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Theme.Color.sectionBackground.opacity(0.55))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Theme.Color.primaryText.opacity(0.08), lineWidth: 0.8)
-                    )
+                    .fill(Theme.Color.sectionBackground.opacity(0.5))
             )
-            .layoutPriority(1)
 
-            VStack(alignment: .center, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Average score")
-                    .font(Theme.Font.subheadline.weight(.semibold))
-                    .foregroundColor(Theme.Color.primaryText)
+                    .font(Theme.Font.captionBold)
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
                 Text("\(averageScore.map { "\($0)%" } ?? "–")")
                     .font(Theme.Font.title2.weight(.bold))
                     .foregroundColor(.white)
@@ -305,18 +278,12 @@ struct RecentVideosCenterModal: View {
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Theme.Color.sectionBackground.opacity(0.55))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Theme.Color.primaryText.opacity(0.08), lineWidth: 0.8)
-                    )
+                    .fill(Theme.Color.sectionBackground.opacity(0.5))
             )
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 10)
     }
 
     private var sortSection: some View {
@@ -333,15 +300,11 @@ struct RecentVideosCenterModal: View {
             .padding(6)
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Theme.Color.sectionBackground.opacity(0.65))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Theme.Color.primaryText.opacity(0.05), lineWidth: 1)
+                    .fill(Theme.Color.sectionBackground.opacity(0.45))
             )
         }
         .padding(.horizontal, 24)
-        .padding(.top, 12)
+        .padding(.top, 8)
     }
 
     private func sortButton(for sort: SortOption) -> some View {
@@ -356,7 +319,7 @@ struct RecentVideosCenterModal: View {
                 .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(selectedSort == sort ? AnyShapeStyle(Theme.Gradient.appBluePurple) : AnyShapeStyle(Color.clear))
+                        .fill(selectedSort == sort ? AnyShapeStyle(Theme.Gradient.appBluePurple) : AnyShapeStyle(Theme.Color.sectionBackground.opacity(0.35)))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -404,7 +367,7 @@ struct RecentVideosCenterModal: View {
 
             let rowScore = displayedScore(for: item)
 
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
                 thumbnailSection(for: item)
                 infoSection(title: title, formattedDate: formattedDate)
                 Spacer(minLength: 0)
@@ -413,8 +376,8 @@ struct RecentVideosCenterModal: View {
                 }
                 navigationChevron
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .background(cardRowBackground)
         }
         .buttonStyle(.plain)
@@ -459,9 +422,9 @@ struct RecentVideosCenterModal: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(borderGradient.opacity(0.8), lineWidth: 0.8)
+                .stroke(borderGradient.opacity(0.5), lineWidth: 0.6)
         )
-        .shadow(color: .black.opacity(0.28), radius: 12, y: 6)
+        .shadow(color: .black.opacity(0.1), radius: 6, y: 3)
     }
 
     private func infoSection(title: String, formattedDate: String) -> some View {
@@ -490,17 +453,12 @@ struct RecentVideosCenterModal: View {
 
     private var cardRowBackground: some View {
         RoundedRectangle(cornerRadius: 20, style: .continuous)
-            .fill(Theme.Color.sectionBackground.opacity(0.65))
+            .fill(Theme.Color.sectionBackground.opacity(0.6))
             .overlay(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Theme.Color.primaryText.opacity(0.05), lineWidth: 1)
+                    .stroke(borderGradient.opacity(0.3), lineWidth: 0.9)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(borderGradient.opacity(0.35), lineWidth: 0.8)
-                    .blendMode(.overlay)
-            )
-            .shadow(color: .black.opacity(0.22), radius: 14, y: 6)
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
     }
 
     private func displayedScore(for item: CacheManager.RecentAnalysisItem) -> Double? {
@@ -517,18 +475,13 @@ struct RecentVideosCenterModal: View {
 
         return ZStack {
             Circle()
-                .fill(Theme.Color.sectionBackground.opacity(0.82))
-                .shadow(color: Theme.Color.accent.opacity(0.28), radius: 10, y: 4)
+                .fill(Theme.Color.sectionBackground.opacity(0.75))
+                .shadow(color: Theme.Color.accent.opacity(0.2), radius: 6, y: 2)
 
             Circle()
-                .strokeBorder(scoreGradient(for: clampedScore), lineWidth: 2.4)
-                .overlay(
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.8)
-                        .blur(radius: 0.4)
-                )
+                .strokeBorder(scoreGradient(for: clampedScore), lineWidth: 2)
 
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 Text(formattedScore)
                     .font(Theme.Font.subheadline.weight(.bold))
                     .foregroundColor(.white)
@@ -538,7 +491,7 @@ struct RecentVideosCenterModal: View {
                     .font(Theme.Font.caption)
                     .fontWeight(.semibold)
                     .foregroundColor(Theme.Color.secondaryText.opacity(0.8))
-                    .tracking(0.4)
+                    .tracking(0.3)
             }
         }
         .frame(width: 52, height: 52)
@@ -565,6 +518,29 @@ struct RecentVideosCenterModal_Previews: PreviewProvider {
         RecentVideosCenterModal(
             onDismiss: {},
             onSelect: { _ in },
+            initialItems: [
+                CacheManager.RecentAnalysisItem(
+                    videoId: "abc123xyz01",
+                    title: "AI Productivity: 7 Habits to Work Smarter",
+                    thumbnailURL: URL(string: "https://i.ytimg.com/vi/5MgBikgcWnY/hq720.jpg"),
+                    finalScore: 82,
+                    modifiedAt: Date().addingTimeInterval(-3600)
+                ),
+                CacheManager.RecentAnalysisItem(
+                    videoId: "def456uvw02",
+                    title: "The Hidden Costs of Automation",
+                    thumbnailURL: URL(string: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hq720.jpg"),
+                    finalScore: 68,
+                    modifiedAt: Date().addingTimeInterval(-86000)
+                ),
+                CacheManager.RecentAnalysisItem(
+                    videoId: "ghi789rst03",
+                    title: "Quantum Computing Explained Simply",
+                    thumbnailURL: URL(string: "https://i.ytimg.com/vi/oHg5SJYRHA0/hq720.jpg"),
+                    finalScore: 90,
+                    modifiedAt: Date().addingTimeInterval(-172800)
+                )
+            ],
             borderGradient: Theme.Gradient.appBluePurple
         )
         .preferredColorScheme(.dark)

@@ -5,6 +5,59 @@
 import SwiftUI
 import UIKit
 
+// Shared toolbar title used across screens to keep the app header consistent.
+struct WorthItToolbarTitle: View {
+    var opacity: Double = 1.0
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image("AppLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 30, height: 30)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+            Text("WorthIt.AI")
+                .font(Theme.Font.toolbarTitle)
+                .foregroundStyle(Theme.Gradient.appLogoText())
+                .shadow(color: Color.black.opacity(0.3), radius: 1)
+        }
+        .opacity(opacity)
+    }
+}
+
+// Shared "Recent Videos" header used in the main screen and the Recent Videos modal
+struct RecentVideosHeaderLabel: View {
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Theme.Gradient.appBluePurple)
+                    .frame(width: 52, height: 52)
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                            .shadow(color: Theme.Color.accent.opacity(0.45), radius: 12, y: 6)
+                    )
+
+                Image(systemName: "play.rectangle.fill")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Recent Videos")
+                    .font(Theme.Font.title3.weight(.bold))
+                    .foregroundColor(Theme.Color.primaryText)
+
+                Text("Revisit your latest WorthIt insights.")
+                    .font(Theme.Font.subheadline)
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.92))
+            }
+        }
+    }
+}
+
 // Helper modifier to conditionally run setup code in onAppear
 private struct GroupModifier: ViewModifier {
     let isLoading: Bool

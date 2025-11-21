@@ -127,11 +127,7 @@ struct InitialScreen: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
+                                Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing),
                                 lineWidth: 1.6
                             )
                     )
@@ -275,11 +271,7 @@ struct InitialScreen: View {
                     subtitle: "Get key points quickly",
                     icon: "sparkles",
                     iconColor: .white,
-                    gradient: LinearGradient(
-                        gradient: Gradient(colors: [Color.blue, Color.purple]),
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
+                    gradient: Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing),
                     isLoading: !canOpenEssentials,
                     action: {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -330,11 +322,7 @@ struct InitialScreen: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
                         .strokeBorder(
-                            LinearGradient(
-                                gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
+                            Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing),
                             lineWidth: 1.6
                         )
                 )
@@ -360,11 +348,7 @@ extension InitialScreen {
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
                     .strokeBorder(
-                        LinearGradient(
-                            gradient: Gradient(colors: [Color.blue, Color.purple]),
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
+                        Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing),
                         lineWidth: 1.6
                     )
                     .shadow(color: .white.opacity(0.05), radius: 5, x: 0, y: 3)
@@ -450,7 +434,7 @@ struct ScoreBreakdownCardView: View {
                             negativeIcon: "exclamationmark.triangle.fill",
                             positiveColor: Theme.Color.orange,
                             negativeColor: Theme.Color.warning,
-                            maxItems: 1
+                            maxItems: 2
                         )
                         
                         if breakdown.hasComments {
@@ -477,7 +461,7 @@ struct ScoreBreakdownCardView: View {
                                 negativeIcon: "xmark.octagon.fill",
                                 positiveColor: Theme.Color.success,
                                 negativeColor: Theme.Color.error,
-                                maxItems: 1
+                                maxItems: 2
                             )
                             
                             if let analyzed = breakdown.commentsAnalyzed, analyzed > 0 {
@@ -522,13 +506,7 @@ struct ScoreBreakdownCardView: View {
                                 .foregroundStyle(Theme.Color.secondaryText)
                             Text(worthItMessage)
                                 .font(Theme.Font.headline)
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .foregroundStyle(Theme.Gradient.appLogoText())
                                 .lineLimit(2)
                                 .minimumScaleFactor(0.9)
                         }
@@ -905,13 +883,7 @@ struct AboutView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("WorthIt.AI")
                                     .font(Theme.Font.title2.weight(.bold))
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Theme.Gradient.appLogoText())
                                 Text("AI‑Powered YouTube Video Analysis")
                                     .font(Theme.Font.subheadline)
                                     .foregroundColor(Theme.Color.secondaryText)

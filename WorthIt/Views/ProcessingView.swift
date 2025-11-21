@@ -133,11 +133,7 @@ struct ShimmeringProgressView: View {
                 // Progress fill, driven by the parent view's state
                 Capsule()
                     .fill(
-                        LinearGradient(
-                            gradient: Gradient(colors: [Color.blue, Color.purple]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
+                        Theme.Gradient.brand()
                     )
                     .frame(width: geometry.size.width * progress)
                 

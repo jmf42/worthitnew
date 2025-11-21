@@ -900,13 +900,7 @@ struct CategorizedCommentDetailSheet: View {
                 HStack {
                     Text(category.rawValue)
                         .font(Theme.Font.title3.weight(.bold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
+                        .foregroundStyle(Theme.Gradient.brand())
                     Spacer()
                     Button(action: onClose) {
                         Image(systemName: "xmark.circle.fill")

@@ -76,16 +76,27 @@ final class StartOptionsViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
             let metadata = await fetchLPMetadata(for: metadataURL)
-            let title = metadata?.title ?? metadataURL.host ?? ""
+            if Task.isCancelled { return }
+
+            var title = metadata?.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if title.isEmpty, let fallbackTitle = await fetchYouTubeOEmbedTitle(for: metadataURL) {
+                title = fallbackTitle
+            }
+            if Task.isCancelled { return }
+            if title.isEmpty {
+                title = metadataURL.host ?? "YouTube video"
+            }
+
             var image: UIImage?
             if let provider = metadata?.iconProvider {
                 image = try? await provider.loadImage()
             }
+            if Task.isCancelled { return }
             if image == nil, let provider = metadata?.imageProvider {
                 image = try? await provider.loadImage()
             }
             await MainActor.run {
-                previewData = metadata == nil ? nil : TinyPreviewData(title: title, image: image)
+                previewData = TinyPreviewData(title: title, image: image)
             }
         }
     }
@@ -97,6 +108,30 @@ final class StartOptionsViewModel: ObservableObject {
             provider.startFetchingMetadata(for: url) { metadata, _ in
                 continuation.resume(returning: metadata)
             }
+        }
+    }
+
+    private func fetchYouTubeOEmbedTitle(for url: URL) async -> String? {
+        var components = URLComponents(string: "https://www.youtube.com/oembed")
+        components?.queryItems = [
+            URLQueryItem(name: "url", value: url.absoluteString),
+            URLQueryItem(name: "format", value: "json")
+        ]
+        guard let oembedURL = components?.url else { return nil }
+
+        var request = URLRequest(url: oembedURL)
+        request.timeoutInterval = 3
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            struct OEmbedResponse: Decodable { let title: String }
+            let decoded = try JSONDecoder().decode(OEmbedResponse.self, from: data)
+            let trimmed = decoded.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        } catch {
+            Logger.shared.debug("oEmbed title fetch failed: \(error.localizedDescription)", category: .parsing)
+            return nil
         }
     }
 
@@ -142,23 +177,17 @@ struct StartOptionsView: View {
 
     private let controlHeight: CGFloat = 44
     private let optionControlHeight: CGFloat = 40
+    @State private var pasteFieldFrame: CGRect = .zero
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(Theme.Color.accent)
-                Text("Start here")
-                    .font(Theme.Font.title3.weight(.bold))
-                    .foregroundColor(Theme.Color.primaryText)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            startHeader
 
             if !isRunningInExtension {
                 optionHeader(
                     number: 1,
-                    title: "Paste a YouTube link"
+                    title: "Paste a YouTube link",
+                    icon: "link"
                 )
                 pasteAnalyzeSection
             }
@@ -167,7 +196,8 @@ struct StartOptionsView: View {
 
             optionHeader(
                 number: 2,
-                title: "Share from the YouTube app"
+                title: "Share from YouTube",
+                icon: "square.and.arrow.up"
             )
             sharePill
 
@@ -185,6 +215,43 @@ struct StartOptionsView: View {
                 }
             }
             .tint(Theme.Color.secondaryText.opacity(0.88))
+        }
+        .coordinateSpace(name: "StartOptionsArea")
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onEnded { gesture in
+                    guard pasteFieldFocus.wrappedValue else { return }
+                    if !pasteFieldFrame.contains(gesture.location) {
+                        dismissKeyboard()
+                    }
+                }
+        )
+    }
+
+    private var startHeader: some View {
+        HStack(spacing: 16) {
+            startPowerBadge
+            Text("Start here")
+                .font(Theme.Font.title3.weight(.bold))
+                .foregroundColor(Theme.Color.primaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var startPowerBadge: some View {
+        ZStack {
+            Circle()
+                .fill(Theme.Gradient.appBluePurple)
+                .frame(width: 52, height: 52)
+                .overlay(
+                    Circle()
+                        .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                )
+                .shadow(color: Theme.Color.accent.opacity(0.08), radius: 4, y: 2)
+
+            Image(systemName: "power")
+                .font(.system(size: 24, weight: .heavy))
+                .foregroundColor(.white)
         }
     }
 
@@ -220,9 +287,6 @@ struct StartOptionsView: View {
                     )
 
                 HStack(spacing: 12) {
-                    optionIconCircle(systemName: "link")
-                        .frame(width: 32, height: 32)
-
                     TextField(
                         "Paste a YouTube link here",
                         text: Binding(
@@ -276,6 +340,17 @@ struct StartOptionsView: View {
                     }
                 }
                 .padding(.horizontal, 12)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear {
+                                pasteFieldFrame = proxy.frame(in: .named("StartOptionsArea"))
+                            }
+                            .onChange(of: proxy.size) { _ in
+                                pasteFieldFrame = proxy.frame(in: .named("StartOptionsArea"))
+                            }
+                    }
+                )
             }
             .frame(maxWidth: .infinity, minHeight: optionControlHeight, maxHeight: optionControlHeight)
 
@@ -313,11 +388,7 @@ struct StartOptionsView: View {
                     .overlay(
                         Group {
                             if viewModel.isAnalyzeEnabled(for: mainViewModel.viewState) {
-                                LinearGradient(
-                                    gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
+                                Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing)
                                 .opacity(ctaPulse ? 0.4 : 0.2)
                                 .mask(
                                     RoundedRectangle(cornerRadius: 12)
@@ -339,20 +410,13 @@ struct StartOptionsView: View {
     }
 
     private var sharePill: some View {
-        let background = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        let background = RoundedRectangle(cornerRadius: 12, style: .continuous)
         return HStack(spacing: 12) {
-            optionIconCircle(systemName: "square.and.arrow.up")
-                .frame(width: 32, height: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Share from the YouTube app")
-                    .font(Theme.Font.subheadline)
-                    .foregroundColor(Theme.Color.primaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.9)
-                Text("Tap the Share arrow, then More (…) if you need to reveal WorthIt.AI and keep it in Favorites.")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
-            }
+            Text("Share from YouTube")
+                .font(Theme.Font.subheadlineBold)
+                .foregroundColor(Theme.Color.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
             Spacer()
             Image("AppLogo")
                 .resizable()
@@ -362,11 +426,10 @@ struct StartOptionsView: View {
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.Color.accent.opacity(0.25), lineWidth: 0.5))
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, minHeight: optionControlHeight, maxHeight: optionControlHeight)
         .background(
             background
-                .fill(Theme.Color.sectionBackground.opacity(0.38))
+                .fill(Theme.Color.sectionBackground.opacity(0.28))
                 .background(
                     background
                         .fill(Color.white.opacity(0.03))
@@ -374,27 +437,23 @@ struct StartOptionsView: View {
                 )
         )
         .overlay(
-            background.stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+            background.stroke(Color.white.opacity(0.1), lineWidth: 0.6)
         )
         .overlay(
             background
-                .stroke(borderGradient.opacity(0.5), lineWidth: 0.8)
-                .blendMode(.overlay)
+                .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
     }
 
-    private func optionHeader(number: Int, title: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(String(format: "Option %02d", number))
-                .font(Theme.Font.captionBold)
-                .foregroundColor(.white.opacity(0.9))
-                .tracking(0.5)
-            Text(title)
+    private func optionHeader(number: Int, title: String, icon: String) -> some View {
+        HStack(spacing: 10) {
+            optionIconCircle(systemName: icon)
+                .frame(width: 28, height: 28)
+            Text("Option \(number) - \(title)")
                 .font(Theme.Font.subheadlineBold)
-                .foregroundColor(.white)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
+                .foregroundColor(Theme.Color.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.95)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

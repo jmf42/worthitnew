@@ -19,6 +19,11 @@ struct Theme {
 
         static let accent = SwiftUI.Color("AccentColor") // Ensure this is defined in Assets
 
+        // Brand gradient stops sampled from the logo glow
+        static let brandCyan         = SwiftUI.Color(UIColor(hex: "3CE2F3")) // slightly toned-down cyan
+        static let brandBlue         = SwiftUI.Color(UIColor(hex: "2A74F5")) // softened mid-blue
+        static let brandPurple       = SwiftUI.Color(UIColor(hex: "7D26E8")) // deeper violet
+
         static let success           = SwiftUI.Color.green
         static let warning           = SwiftUI.Color.yellow
         static let orange            = SwiftUI.Color.orange
@@ -70,11 +75,57 @@ struct Theme {
 
         static let bluePurple = accent // Alias
 
-        // App/logo primary gradient (system blue → purple)
-        static let appBluePurple = LinearGradient(
-            gradient: SwiftUI.Gradient(colors: [SwiftUI.Color.blue, SwiftUI.Color.purple]),
+        // App/logo primary gradient sampled from the logo glow
+        static let brandColors: [SwiftUI.Color] = [Theme.Color.brandCyan, Theme.Color.brandBlue, Theme.Color.brandPurple]
+
+        static func brand(startPoint: UnitPoint = .leading, endPoint: UnitPoint = .trailing) -> LinearGradient {
+            LinearGradient(
+                gradient: SwiftUI.Gradient(colors: brandColors),
+                startPoint: startPoint,
+                endPoint: endPoint
+            )
+        }
+
+        static func brandSheen(startPoint: UnitPoint = .topLeading, endPoint: UnitPoint = .bottomTrailing) -> LinearGradient {
+            LinearGradient(
+                gradient: SwiftUI.Gradient(stops: [
+                    .init(color: Theme.Color.brandCyan.opacity(0.35), location: 0.0),
+                    .init(color: SwiftUI.Color.white.opacity(0.14), location: 0.38),
+                    .init(color: Theme.Color.brandPurple.opacity(0.32), location: 1.0)
+                ]),
+                startPoint: startPoint,
+                endPoint: endPoint
+            )
+        }
+
+        static var appBluePurple: LinearGradient {
+            brand()
+        }
+
+        static let appLogo = LinearGradient(
+            gradient: SwiftUI.Gradient(colors: brandColors),
             startPoint: .leading,
             endPoint: .trailing
+        )
+
+        static func appLogoText(opacity: Double = 0.92) -> LinearGradient {
+            let toned = brandColors.map { $0.opacity(opacity) }
+            return LinearGradient(
+                gradient: SwiftUI.Gradient(colors: toned),
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        }
+
+        static let vignette = RadialGradient(
+            gradient: SwiftUI.Gradient(stops: [
+                .init(color: SwiftUI.Color.clear, location: 0.0),
+                .init(color: SwiftUI.Color.black.opacity(0.18), location: 0.55),
+                .init(color: SwiftUI.Color.black.opacity(0.32), location: 1.0)
+            ]),
+            center: .center,
+            startRadius: 0,
+            endRadius: UIScreen.main.bounds.width
         )
 
         
@@ -240,7 +291,7 @@ struct StyledOptionButton: View {
             .padding()
             .background(
                 Theme.Color.sectionBackground
-                    .overlay(gradient.opacity(isPressed ? 0.2 : 0.1)) // Subtle gradient overlay
+                    .overlay(gradient.opacity(isPressed ? 0.18 : 0.12)) // Subtle gradient overlay
             )
             .cornerRadius(16)
             .overlay(
@@ -250,7 +301,7 @@ struct StyledOptionButton: View {
                         lineWidth: 1
                     )
             )
-            .shadow(color: iconColor.opacity(0.2), radius: 5, y: 2)
+            .shadow(color: Theme.Color.brandBlue.opacity(0.18), radius: 8, y: 4)
             .scaleEffect(isPressed ? 0.98 : 1.0)
             .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isPressed)
         }

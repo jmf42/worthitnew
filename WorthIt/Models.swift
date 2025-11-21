@@ -9,11 +9,11 @@ struct AppConstants {
     static let bundleID = Bundle.main.bundleIdentifier ?? "com.juanma.worthmytime" // Your bundle ID
     static let urlScheme = "worthitai"
     static let apiBaseURLKey = "API_PROXY_BASE_URL"
-    static let subscriptionProductMonthlyID = "tuliai.worthit.premium.monthly"
+    static let subscriptionProductWeeklyID = "tuliai.worthit.premium.weekly"
     static let subscriptionProductAnnualID = "tuliai.worthit.premium.annual"
     static let subscriptionProductIDs: [String] = [
         AppConstants.subscriptionProductAnnualID,
-        AppConstants.subscriptionProductMonthlyID
+        AppConstants.subscriptionProductWeeklyID
     ]
     static let dailyFreeAnalysisLimit = 5
     static let subscriptionDeepLink = "worthitai://subscribe"
@@ -214,9 +214,19 @@ struct CommentInsights: Codable, Identifiable {
     // ALWAYS present after the intro call
     let suggestedQuestions: [String]
 
+    // Decision/preview & value props
+    let decisionVerdict: String?
+    let decisionConfidence: Double?
+    let decisionReasons: [String]
+    let decisionLearnings: [String]
+    let decisionBestMoment: String?
+    let decisionSkip: String?
+    let signalQualityNote: String?
+
     enum CodingKeys: String, CodingKey {
         case videoId, viewerTips
         case overallCommentSentimentScore, contentDepthScore, suggestedQuestions
+        case decisionVerdict, decisionConfidence, decisionReasons, decisionLearnings, decisionBestMoment, decisionSkip, signalQualityNote
     }
 
     init(from decoder: Decoder) throws {
@@ -227,6 +237,13 @@ struct CommentInsights: Codable, Identifiable {
         contentDepthScore            = try c.decodeIfPresent(Double.self, forKey: .contentDepthScore)
         // Ensure we always have a questions array
         suggestedQuestions = (try? c.decode([String].self, forKey: .suggestedQuestions)) ?? []
+        decisionVerdict = try c.decodeIfPresent(String.self, forKey: .decisionVerdict)
+        decisionConfidence = try c.decodeIfPresent(Double.self, forKey: .decisionConfidence)
+        decisionReasons = (try? c.decode([String].self, forKey: .decisionReasons)) ?? []
+        decisionLearnings = (try? c.decode([String].self, forKey: .decisionLearnings)) ?? []
+        decisionBestMoment = try c.decodeIfPresent(String.self, forKey: .decisionBestMoment)
+        decisionSkip = try c.decodeIfPresent(String.self, forKey: .decisionSkip)
+        signalQualityNote = try c.decodeIfPresent(String.self, forKey: .signalQualityNote)
     }
 
     // Convenience member‑wise init for previews / tests
@@ -235,13 +252,27 @@ struct CommentInsights: Codable, Identifiable {
         viewerTips: [String]? = nil,
         overallCommentSentimentScore: Double? = nil,
         contentDepthScore: Double? = nil,
-        suggestedQuestions: [String] = []
+        suggestedQuestions: [String] = [],
+        decisionVerdict: String? = nil,
+        decisionConfidence: Double? = nil,
+        decisionReasons: [String] = [],
+        decisionLearnings: [String] = [],
+        decisionBestMoment: String? = nil,
+        decisionSkip: String? = nil,
+        signalQualityNote: String? = nil
     ) {
         self.videoId = videoId
         self.viewerTips = viewerTips
         self.overallCommentSentimentScore = overallCommentSentimentScore
         self.contentDepthScore = contentDepthScore
         self.suggestedQuestions = suggestedQuestions
+        self.decisionVerdict = decisionVerdict
+        self.decisionConfidence = decisionConfidence
+        self.decisionReasons = decisionReasons
+        self.decisionLearnings = decisionLearnings
+        self.decisionBestMoment = decisionBestMoment
+        self.decisionSkip = decisionSkip
+        self.signalQualityNote = signalQualityNote
     }
 }
 
@@ -333,6 +364,10 @@ struct DecisionCardModel: Equatable {
     let timeValue: String?
     let thumbnailURL: URL?
     let bestStartSeconds: Int?
+    let learnings: [String]
+    let skipNote: String?
+    let signalQuality: String?
+    let topQuestion: String?
 }
 
 struct DecisionProofChip: Equatable {

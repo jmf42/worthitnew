@@ -27,30 +27,31 @@ struct PaywallCard: View {
         subscriptionManager.products.first { $0.id == AppConstants.subscriptionProductAnnualID }
     }
 
-    private var monthlyProduct: Product? {
-        subscriptionManager.products.first { $0.id == AppConstants.subscriptionProductMonthlyID }
+    private var weeklyProduct: Product? {
+        subscriptionManager.products.first { $0.id == AppConstants.subscriptionProductWeeklyID }
     }
 
     private var annualSavingsPercent: Int? {
         guard
             let annual = annualProduct,
-            let monthly = monthlyProduct
+            let weekly = weeklyProduct
         else {
             return nil
         }
 
         let annualPrice = NSDecimalNumber(decimal: annual.price).doubleValue
-        let monthlyPrice = NSDecimalNumber(decimal: monthly.price).doubleValue
-        guard annualPrice > 0, monthlyPrice > 0 else {
+        let weeklyPrice = NSDecimalNumber(decimal: weekly.price).doubleValue
+        guard annualPrice > 0, weeklyPrice > 0 else {
             return nil
         }
 
-        let annualIfMonthly = monthlyPrice * 12
-        guard annualIfMonthly > 0 else {
+        // Compare annual cost against paying weekly for a full year (52 weeks).
+        let annualIfWeekly = weeklyPrice * 52
+        guard annualIfWeekly > 0 else {
             return nil
         }
 
-        let savingsRatio = 1 - (annualPrice / annualIfMonthly)
+        let savingsRatio = 1 - (annualPrice / annualIfWeekly)
         let percentage = Int((savingsRatio * 100).rounded())
         return percentage > 0 ? percentage : nil
     }
@@ -62,7 +63,7 @@ struct PaywallCard: View {
 
     private var plans: [PaywallPlanOption] {
         let annual = annualProduct
-        let monthly = monthlyProduct
+        let weekly = weeklyProduct
 
         let options: [PaywallPlanOption] = [
             PaywallPlanOption(
@@ -76,12 +77,12 @@ struct PaywallCard: View {
                 footnote: nil
             ),
             PaywallPlanOption(
-                id: AppConstants.subscriptionProductMonthlyID,
-                title: "Monthly",
-                priceText: monthly?.displayPrice ?? "Loading…",
-                detailText: "Cancel anytime. Billed monthly.",
+                id: AppConstants.subscriptionProductWeeklyID,
+                title: "Weekly",
+                priceText: weekly?.displayPrice ?? "Loading…",
+                detailText: "Cancel anytime. Billed weekly.",
                 trailingBadge: nil,
-                product: monthly,
+                product: weekly,
                 isRecommended: false,
                 footnote: "Stay flexible. Cancel anytime."
             )
@@ -122,7 +123,6 @@ struct PaywallCard: View {
     var body: some View {
         VStack(spacing: isInExtension ? 16 : 18) {
             header
-            momentumSection
             usageSummary
 
             premiumBenefits
@@ -214,39 +214,6 @@ struct PaywallCard: View {
                 Spacer()
             }
         }
-    }
-
-    private var momentumSection: some View {
-        let snapshot = context.usageSnapshot
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("Momentum snapshot")
-                .font(Theme.Font.captionBold)
-                .foregroundColor(Theme.Color.secondaryText)
-
-            HStack(spacing: 10) {
-                momentumTile(title: "Analyses today", value: "\(snapshot.count)/\(snapshot.limit)")
-                momentumTile(title: "Free left", value: "\(max(0, snapshot.remaining))")
-            }
-        }
-        .padding(12)
-        .background(cardFill(opacity: 0.65, cornerRadius: 20))
-        .overlay(cardStroke(cornerRadius: 20))
-    }
-
-    private func momentumTile(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.Color.secondaryText)
-            Text(value)
-                .font(Theme.Font.title3.weight(.semibold))
-                .foregroundColor(Theme.Color.primaryText)
-        }
-        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 10)
-        .background(cardFill(opacity: 0.38, cornerRadius: 14))
-        .overlay(cardStroke(cornerRadius: 14))
     }
 
     private func formattedMinutes(_ minutes: Double) -> String {
@@ -801,8 +768,8 @@ struct PaywallPlanOption: Identifiable, Equatable {
 
     var placeholderPrice: String {
         switch id {
-        case AppConstants.subscriptionProductMonthlyID:
-            return "$9.99 / month"
+        case AppConstants.subscriptionProductWeeklyID:
+            return "$2.99 / week"
         case AppConstants.subscriptionProductAnnualID:
             return "$99.99 / year"
         default:

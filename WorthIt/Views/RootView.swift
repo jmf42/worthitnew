@@ -25,8 +25,6 @@ struct RootView: View {
     @AppStorage("hasOnboarded") var hasOnboarded: Bool = false // New AppStorage for onboarding
     private let onboardingDemoVideoURL = URL(string: "https://www.youtube.com/watch?v=5MgBikgcWnY")!
     @AppStorage("subscribe_banner_dismissed") private var subscribeBannerDismissed = false
-    @State private var timeSavedDismissWorkItem: DispatchWorkItem?
-    @State private var timeSavedDisplayDuration: Double = 0
     @State private var showDecisionCard: Bool = false
 
     init() {
@@ -80,39 +78,10 @@ struct RootView: View {
     }
 
     @ViewBuilder
-    private var timeSavedToastOverlay: some View {
-        if let event = viewModel.latestTimeSavedEvent {
-            GeometryReader { proxy in
-                TimeSavedBannerView(
-                    event: event,
-                    safeAreaInsets: proxy.safeAreaInsets,
-                    minutesFormatter: formattedSingleMinutes,
-                    totalFormatter: formattedCumulativeMinutes,
-                    displayDuration: timeSavedDisplayDuration
-                ) {
-                    withAnimation(.easeInOut(duration: 0.35)) {
-                        viewModel.clearTimeSavedEvent()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .ignoresSafeArea(edges: .top)
-            }
-            .transition(
-                .asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity),
-                    removal: .move(edge: .top).combined(with: .opacity)
-                )
-            )
-            .zIndex(750)
-        }
-    }
-
-    @ViewBuilder
     private var decisionCardOverlay: some View {
         if showDecisionCard,
            let card = viewModel.decisionCardModel,
-           viewModel.activePaywall == nil,
-           viewModel.viewState == .showingInitialOptions {
+           viewModel.activePaywall == nil {
             ZStack {
                 Color.black.opacity(0.55)
                     .ignoresSafeArea()
@@ -125,13 +94,17 @@ struct RootView: View {
                 DecisionCardView(
                     model: card,
                     onPrimaryAction: {
-                        openBestPart(for: card)
+                        viewModel.requestEssentials()
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                             showDecisionCard = false
                         }
                     },
                     onSecondaryAction: {
-                        viewModel.requestScoreBreakdownPresentation()
+                        if let question = card.topQuestion {
+                            viewModel.askTopQuestionIfAvailable(question)
+                        } else {
+                            viewModel.requestAskAnything()
+                        }
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                             showDecisionCard = false
                         }
@@ -169,8 +142,6 @@ struct RootView: View {
                     .transition(.opacity)
                 }
             }
-
-            timeSavedToastOverlay
         }
         .onReceive(viewModel.$shouldOpenManageSubscriptions) { shouldOpen in
             guard shouldOpen else { return }
@@ -228,40 +199,50 @@ struct RootView: View {
         }
         .onAppear {
             Logger.shared.info("RootView appeared. Current ViewModel state: \(viewModel.viewState)", category: .ui)
-            if !isRunningInExtension {
-                viewModel.syncTimeSavedMetricsFromSharedDefaults()
-            }
-            scheduleTimeSavedToastDismissal()
         }
         .onReceive(subscriptionManager.$status) { status in
             if case .subscribed = status {
                 subscribeBannerDismissed = false
             }
         }
-        .onChange(of: viewModel.latestTimeSavedEvent?.id) { _ in
-            scheduleTimeSavedToastDismissal()
-        }
         .onReceive(viewModel.$shouldPromptDecisionCard) { prompt in
             guard prompt,
                   viewModel.decisionCardModel != nil,
-                  viewModel.viewState == .showingInitialOptions,
-                  !isRunningInExtension else { return }
+                  !viewModel.hasShownDecisionCardForCurrentVideo else { return }
             withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                 showDecisionCard = true
             }
+            viewModel.markDecisionCardShownIfNeeded()
             viewModel.consumeDecisionCardPrompt()
         }
         .onChange(of: viewModel.viewState) { newValue in
             if newValue == .processing { showDecisionCard = false }
+            if newValue != .processing,
+               viewModel.decisionCardModel != nil,
+               !showDecisionCard,
+               viewModel.activePaywall == nil,
+               !viewModel.hasShownDecisionCardForCurrentVideo {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                    showDecisionCard = true
+                }
+                viewModel.markDecisionCardShownIfNeeded()
+            }
         }
         .onReceive(viewModel.$activePaywall) { paywall in
             if paywall != nil { showDecisionCard = false }
         }
         .onReceive(viewModel.$decisionCardModel) { model in
-            if model == nil { showDecisionCard = false }
-        }
-        .onDisappear {
-            timeSavedDismissWorkItem?.cancel()
+            if model == nil {
+                showDecisionCard = false
+            } else if !showDecisionCard,
+                      viewModel.activePaywall == nil,
+                      viewModel.viewState != .processing,
+                      !viewModel.hasShownDecisionCardForCurrentVideo {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                    showDecisionCard = true
+                }
+                viewModel.markDecisionCardShownIfNeeded()
+            }
         }
     }
 
@@ -272,6 +253,7 @@ struct RootView: View {
                 .fill(Theme.Gradient.neonGlow)
                 .opacity(viewModel.viewState == .processing || viewModel.viewState == .idle ? 0.3 : 0.15)
                 .animation(.easeInOut, value: viewModel.viewState)
+            Theme.Gradient.vignette
         }
         .ignoresSafeArea()
         .contentShape(Rectangle())
@@ -517,13 +499,7 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("WorthIt.AI")
                         .font(Theme.Font.title3.weight(.bold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
+                        .foregroundStyle(Theme.Gradient.appLogoText())
                     Text("AI‑powered insights, summaries, and Q&A for YouTube videos")
                         .font(Theme.Font.subheadline)
                         .foregroundColor(Theme.Color.secondaryText)
@@ -570,18 +546,8 @@ struct RootView: View {
         standardBox {
             VStack(alignment: .leading, spacing: 12) {
                 Button(action: { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { showRecentSheet = true } }) {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "clock.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(Theme.Color.accent)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Recent Videos")
-                                .font(Theme.Font.title3.weight(.bold))
-                                .foregroundColor(Theme.Color.primaryText)
-                            Text("Jump back into your latest WorthIt.AI insights")
-                                .font(Theme.Font.subheadline)
-                                .foregroundColor(Theme.Color.secondaryText)
-                        }
+                    HStack(alignment: .center, spacing: 12) {
+                        RecentVideosHeaderLabel()
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.system(size: 16, weight: .semibold))
@@ -591,83 +557,8 @@ struct RootView: View {
                 }
                 .buttonStyle(.plain)
 
-                if viewModel.cumulativeTimeSavedMinutes > 0 {
-                    Divider()
-                        .background(Color.white.opacity(0.06))
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "hourglass")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.Color.accent)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Minutes stolen from YouTube")
-                                .font(Theme.Font.subheadline)
-                                .foregroundColor(Theme.Color.primaryText)
-                            Text("\(viewModel.uniqueVideosSummarized) videos • \(formattedCumulativeMinutes(viewModel.cumulativeTimeSavedMinutes)) saved")
-                                .font(Theme.Font.caption)
-                                .foregroundColor(Theme.Color.secondaryText)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                }
             }
         }
-    }
-
-    private func formattedSingleMinutes(_ value: Double) -> String {
-        if value >= 10 {
-            return "\(Int(value.rounded())) min"
-        } else if value >= 1 {
-            return String(format: "%.1f min", value)
-        } else {
-            return String(format: "%.0f sec", value * 60.0)
-        }
-    }
-
-    private func formattedCumulativeMinutes(_ value: Double) -> String {
-        if value >= 120 {
-            let hours = Int(value) / 60
-            let minutes = Int(value.rounded()) % 60
-            if minutes == 0 {
-                return "\(hours)h"
-            } else {
-                return "\(hours)h \(minutes)m"
-            }
-        } else if value >= 60 {
-            return String(format: "%.1f h", value / 60.0)
-        } else if value >= 10 {
-            return "\(Int(value.rounded())) min"
-        } else if value >= 1 {
-            return String(format: "%.1f min", value)
-        } else {
-            return String(format: "%.0f sec", value * 60.0)
-        }
-    }
-
-    private func scheduleTimeSavedToastDismissal() {
-        if timeSavedDismissWorkItem != nil {
-            Logger.shared.debug("Cancelling pending time-saved banner dismissal", category: .timeSavings)
-        }
-        timeSavedDismissWorkItem?.cancel()
-        guard viewModel.latestTimeSavedEvent != nil else {
-            timeSavedDisplayDuration = 0
-            return
-        }
-        let displayDelay: TimeInterval = (viewModel.latestTimeSavedEvent?.alreadyCounted ?? false) ? 3.0 : 4.5
-        timeSavedDisplayDuration = displayDelay
-        Logger.shared.debug(
-            "Scheduling time-saved banner auto-dismiss",
-            category: .timeSavings,
-            extra: ["delay": displayDelay]
-        )
-        let workItem = DispatchWorkItem { [weak viewModel] in
-            guard let viewModel = viewModel else { return }
-            Logger.shared.debug("Auto-dismissing time-saved banner after delay", category: .timeSavings)
-            withAnimation(.easeInOut(duration: 0.3)) {
-                viewModel.clearTimeSavedEvent()
-            }
-        }
-        timeSavedDismissWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + displayDelay, execute: workItem)
     }
 
     private func openBestPart(for card: DecisionCardModel) {
@@ -791,28 +682,28 @@ struct RootView: View {
                         .font(Theme.Font.subheadline.weight(.semibold))
                         .foregroundColor(.white)
 
-                    Text("Go unlimited, skip the waitlist, and unlock every WorthIt recap the moment inspiration strikes.")
+                    Text("Go unlimited - remove the 5 videos per day cap and unlock every WorthIt recap the moment inspiration strikes.")
                         .font(Theme.Font.caption)
                         .foregroundColor(.white.opacity(0.82))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 18)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
                 .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(Theme.Gradient.appBluePurple.opacity(0.85))
                         .background(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
                                 .fill(Color.white.opacity(0.06))
-                                .blur(radius: 8)
+                                .blur(radius: 6)
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
                                 .stroke(Color.white.opacity(0.22), lineWidth: 0.9)
                         )
                 )
-                .shadow(color: Theme.Color.accent.opacity(0.35), radius: 10, y: 5)
+                .shadow(color: Theme.Color.accent.opacity(0.12), radius: 6, y: 3)
                 .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .onTapGesture(perform: onSubscribe)
 
@@ -830,25 +721,9 @@ struct RootView: View {
     @ToolbarContentBuilder
     private func toolbarContent() -> some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            HStack(spacing: 8) {
-                Image("AppLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 30, height: 30)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-                Text("WorthIt.AI")
-                    .font(Theme.Font.toolbarTitle)
-                    .foregroundStyle(
-                        LinearGradient(
-                            gradient: Gradient(colors: [Color.blue, Color.purple]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .shadow(color: Color.black.opacity(0.3), radius: 1)
-            }
-            .opacity(viewModel.viewState == .idle ? 0.0 : (viewModel.viewState == .processing ? 0.7 : 1.0))
+            WorthItToolbarTitle(
+                opacity: viewModel.viewState == .idle ? 0.0 : (viewModel.viewState == .processing ? 0.7 : 1.0)
+            )
             .animation(.easeInOut, value: viewModel.viewState)
         }
         // Hide Back on initial options when running inside the Share Extension
@@ -1310,13 +1185,7 @@ struct ShareExplanationModal: View {
                                 .foregroundColor(Theme.Color.accent)
                             Text("How to Share Videos")
                                 .font(Theme.Font.title3.weight(.bold))
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        gradient: Gradient(colors: [Color.blue, Color.purple]),
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .foregroundStyle(Theme.Gradient.appLogoText())
                         }
                         Text("Get instant insights by sharing from YouTube")
                             .font(Theme.Font.subheadline)
@@ -1852,210 +1721,6 @@ private struct IndicatorDot: View {
     private var strokeOpacity: Double { isActive ? 0.55 : 0.18 }
 }
 
-private struct TimeSavedBannerView: View {
-    let event: TimeSavedEvent
-    let safeAreaInsets: EdgeInsets
-    let minutesFormatter: (Double) -> String
-    let totalFormatter: (Double) -> String
-    let displayDuration: Double
-    var onTapDismiss: () -> Void
-
-    @State private var animateIn = false
-    @State private var dragOffset: CGFloat = 0
-    @State private var progress: CGFloat = 0
-
-    private let bannerHeight: CGFloat = 52
-    private let milestoneThresholds: [Double] = [30, 60, 120, 180, 300, 480, 720, 960, 1200, 1440, 1800, 2400, 3000]
-
-    private var iconName: String {
-        event.alreadyCounted ? "clock.arrow.circlepath" : "sparkles"
-    }
-
-    private var titleText: String {
-        if let context = event.context {
-            return context.headline
-        }
-        if event.alreadyCounted {
-            return "Time already counted"
-        }
-        let variants = [
-            "Minutes reclaimed",
-            "Screen time saved",
-            "Progress on your focus streak",
-            "Time back in your day",
-            "You just got minutes back"
-        ]
-        let index = Int(event.id.uuidString.hashValue.magnitude) % variants.count
-        return variants[index]
-    }
-
-    private var subtitleText: String {
-        let total = totalFormatter(event.cumulativeMinutes)
-        let totalLine = "Total saved: \(total)"
-        if let context = event.context {
-            if context.detail.isEmpty {
-                return totalLine
-            } else {
-                return "\(context.detail) • \(totalLine)"
-            }
-        }
-        let minutes = minutesFormatter(event.minutes)
-        let base = event.alreadyCounted
-            ? "Already logged \(minutes) saved • \(totalLine)"
-            : "Saved \(minutes) from YouTube • \(totalLine)"
-        if let nextLine = nextMilestoneLine {
-            return "\(base) • \(nextLine)"
-        }
-        return base
-    }
-
-    private var nextMilestoneLine: String? {
-        guard !event.alreadyCounted else { return nil }
-        guard let nextGoal = milestoneThresholds.first(where: { $0 > event.cumulativeMinutes }) else { return nil }
-        let remaining = max(nextGoal - event.cumulativeMinutes, 0)
-        guard remaining >= 0.25 else { return nil }
-        let proximity = remaining / nextGoal
-        guard proximity <= 0.35 else { return nil }
-        let formattedRemaining = minutesFormatter(remaining)
-        let targetLabel = formatMilestoneTarget(nextGoal)
-        return "\(formattedRemaining) until your next milestone (\(targetLabel))"
-    }
-
-    private var dismissDrag: some Gesture {
-        DragGesture(minimumDistance: 10)
-            .onChanged { value in
-                let translation = value.translation.height
-                dragOffset = translation < 0 ? translation : translation / 4
-            }
-            .onEnded { value in
-                if value.translation.height < -45 {
-                    onTapDismiss()
-                } else {
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
-                        dragOffset = 0
-                    }
-                }
-            }
-    }
-
-    var body: some View {
-        let topInset = safeAreaInsets.top
-
-        VStack(spacing: 0) {
-            Color.clear
-                .frame(height: topInset)
-                .allowsHitTesting(false)
-
-            bannerCard
-                .frame(minHeight: bannerHeight, alignment: .center)
-                .frame(maxWidth: .infinity)
-                .offset(y: animateIn ? dragOffset : -(bannerHeight + 20))
-                .opacity(animateIn ? 1 : 0)
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onAppear {
-            withAnimation(.spring(response: 0.48, dampingFraction: 0.82, blendDuration: 0.15)) {
-                animateIn = true
-            }
-            startProgressAnimation()
-        }
-        .onChange(of: event.id) { _ in
-            startProgressAnimation()
-        }
-        .onDisappear {
-            progress = 0
-        }
-    }
-
-    private func formatMilestoneTarget(_ minutes: Double) -> String {
-        if minutes >= 60 {
-            let hours = minutes / 60
-            if hours == floor(hours) {
-                return "\(Int(hours))h"
-            }
-            return String(format: "%.1fh", hours)
-        }
-        if minutes >= 10 {
-            return "\(Int(minutes.rounded())) min"
-        }
-        if minutes >= 1 {
-            return String(format: "%.1f min", minutes)
-        }
-        return String(format: "%.0f sec", minutes * 60.0)
-    }
-
-    private var bannerCard: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(Theme.Color.sectionBackground.opacity(0.55))
-                    .frame(width: 34, height: 34)
-
-                Image(systemName: iconName)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(Theme.Color.accent)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(titleText)
-                    .font(Theme.Font.subheadlineBold)
-                    .foregroundColor(Theme.Color.primaryText)
-                    .lineLimit(1)
-                Text(subtitleText)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Color.secondaryText.opacity(0.92))
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 0)
-
-            Button(action: onTapDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Theme.Color.secondaryText)
-                    .padding(.horizontal, 6)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss time stolen banner")
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .topLeading) {
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(Theme.Color.accent)
-                    .frame(width: geo.size.width * progress, height: 2)
-                    .opacity(displayDuration > 0 ? 1 : 0)
-            }
-        }
-        .overlay(
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 1),
-            alignment: .bottom
-        )
-        .shadow(color: Color.black.opacity(0.2), radius: 6, y: 4)
-        .contentShape(Rectangle())
-        .onTapGesture { onTapDismiss() }
-        .highPriorityGesture(dismissDrag)
-        .allowsHitTesting(true)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Time stolen notification")
-        .accessibilityHint("Dismiss to return to the video summary")
-    }
-
-    private func startProgressAnimation() {
-        progress = 0
-        guard displayDuration > 0 else { return }
-        withAnimation(.linear(duration: displayDuration)) {
-            progress = 1
-        }
-    }
-}
 #if DEBUG
 struct RootView_Previews: PreviewProvider {
     static let previewSubscriptionManager = SubscriptionManager()
