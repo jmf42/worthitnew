@@ -64,8 +64,8 @@ struct InitialScreen: View {
                     ScoreBreakdownCardView(breakdown: breakdown, isPresented: $showScoreBreakdownSheet)
                         .transition(.scale.combined(with: .opacity))
                         .zIndex(100)
+                }
             }
-        }
         )
         .onAppear {
             // Initialize gauge animation state without triggering confetti
@@ -75,16 +75,11 @@ struct InitialScreen: View {
                 isGaugeAnimationCompleted = false
             }
         }
-        .onChange(of: viewModel.shouldShowScoreBreakdown) { newValue in
-            if newValue, viewModel.scoreBreakdownDetails != nil {
+        .onChange(of: viewModel.shouldPresentScoreBreakdown) { shouldPresent in
+            if shouldPresent, viewModel.scoreBreakdownDetails != nil {
                 showScoreBreakdownSheet = true
             }
-            if !newValue {
-                showScoreBreakdownSheet = showScoreBreakdownSheet && viewModel.scoreBreakdownDetails != nil
-            }
-            if newValue {
-                viewModel.consumeScoreBreakdownRequest()
-            }
+            viewModel.consumeScoreBreakdownRequest()
         }
     }
 

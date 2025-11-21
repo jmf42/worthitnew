@@ -580,3 +580,40 @@ private extension NSItemProvider {
         }
     }
 }
+
+#if DEBUG
+private struct StartOptionsPreviewContainer: View {
+    @StateObject private var mainViewModel = MainViewModel(
+        apiManager: APIManager(),
+        cacheManager: CacheManager.shared,
+        subscriptionManager: SubscriptionManager(),
+        usageTracker: UsageTracker.shared
+    )
+    @StateObject private var startOptionsViewModel = StartOptionsViewModel()
+    @FocusState private var isPasteFocused: Bool
+
+    var body: some View {
+        StartOptionsView(
+            viewModel: startOptionsViewModel,
+            borderGradient: Theme.Gradient.appBluePurple,
+            isRunningInExtension: false,
+            pasteFieldFocus: $isPasteFocused,
+            dismissKeyboard: { isPasteFocused = false }
+        )
+        .environmentObject(mainViewModel)
+        .onAppear {
+            mainViewModel.viewState = .showingInitialOptions
+            startOptionsViewModel.updateInput("https://www.youtube.com/watch?v=5MgBikgcWnY")
+        }
+        .padding()
+        .background(Theme.Color.darkBackground.ignoresSafeArea())
+    }
+}
+
+struct StartOptionsView_Previews: PreviewProvider {
+    static var previews: some View {
+        StartOptionsPreviewContainer()
+            .preferredColorScheme(.dark)
+    }
+}
+#endif

@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 struct DecisionCardView: View {
     let model: DecisionCardModel
@@ -99,7 +100,8 @@ struct DecisionCardView: View {
     }
 
     private var actionRow: some View {
-        HStack(spacing: 12) {
+        let hasJump = (model.bestStartSeconds ?? 0) > 0
+        return HStack(spacing: 12) {
             Button(action: onPrimaryAction) {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles")
@@ -114,6 +116,8 @@ struct DecisionCardView: View {
                 .cornerRadius(14)
                 .shadow(color: Theme.Color.purple.opacity(0.35), radius: 12, y: 6)
             }
+            .disabled(!hasJump)
+            .opacity(hasJump ? 1.0 : 0.5)
 
             Button(action: onSecondaryAction) {
                 HStack(spacing: 8) {
@@ -335,3 +339,47 @@ private struct DecisionChipView: View {
         .animation(.spring(response: 0.5, dampingFraction: 0.9).delay(delay), value: animate)
     }
 }
+
+#if DEBUG
+struct DecisionCardView_Previews: PreviewProvider {
+    private static let sampleModel = DecisionCardModel(
+        title: "The Future of AI in 2025",
+        reason: "Viewers love the actionable roadmap and the pacing stays tight.",
+        score: 86,
+        depthChip: DecisionProofChip(
+            iconName: "brain.head.profile",
+            title: "Depth",
+            detail: "Breaks down core concepts with solid examples."
+        ),
+        commentsChip: DecisionProofChip(
+            iconName: "message.fill",
+            title: "Comments",
+            detail: "Sentiment skews positive with constructive critiques."
+        ),
+        jumpChip: DecisionProofChip(
+            iconName: "forward.end.alt.fill",
+            title: "Best Moment",
+            detail: "Skip ahead to the key framework demo."
+        ),
+        verdict: .worthIt,
+        confidence: DecisionConfidence(level: .high),
+        timeValue: "12 min saved",
+        thumbnailURL: URL(string: "https://i.ytimg.com/vi/5MgBikgcWnY/hq720.jpg"),
+        bestStartSeconds: 145
+    )
+
+    static var previews: some View {
+        ZStack {
+            Theme.Color.darkBackground.ignoresSafeArea()
+            DecisionCardView(
+                model: sampleModel,
+                onPrimaryAction: {},
+                onSecondaryAction: {},
+                onClose: {}
+            )
+            .padding()
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+#endif

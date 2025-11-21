@@ -9,12 +9,14 @@ import UniformTypeIdentifiers
 import StoreKit
 import Combine
 
-// Ensure this is at the top level (outside any struct/class)
+// Ensure these notifications are available in both app and share extension targets
 extension Notification.Name {
     static let shareExtensionShouldDismissGlobal = Notification.Name("com.worthitai.shareExtensionShouldDismiss")
     static let shareExtensionOpenMainApp = Notification.Name("com.worthitai.shareExtensionOpenMainApp")
     static let shareExtensionOpenMainAppFailed = Notification.Name("com.worthitai.shareExtensionOpenMainAppFailed")
 }
+
+
 
 struct RootView: View {
     @State private var showAboutSheet = false
@@ -239,7 +241,7 @@ struct RootView: View {
         .onChange(of: viewModel.latestTimeSavedEvent?.id) { _ in
             scheduleTimeSavedToastDismissal()
         }
-        .onChange(of: viewModel.shouldPromptDecisionCard) { prompt in
+        .onReceive(viewModel.$shouldPromptDecisionCard) { prompt in
             guard prompt,
                   viewModel.decisionCardModel != nil,
                   viewModel.viewState == .showingInitialOptions,
@@ -255,8 +257,8 @@ struct RootView: View {
         .onReceive(viewModel.$activePaywall) { paywall in
             if paywall != nil { showDecisionCard = false }
         }
-        .onChange(of: viewModel.decisionCardModel == nil) { isNil in
-            if isNil { showDecisionCard = false }
+        .onReceive(viewModel.$decisionCardModel) { model in
+            if model == nil { showDecisionCard = false }
         }
         .onDisappear {
             timeSavedDismissWorkItem?.cancel()
@@ -670,14 +672,13 @@ struct RootView: View {
 
     private func openBestPart(for card: DecisionCardModel) {
         guard let videoId = viewModel.currentVideoID ?? viewModel.analysisResult?.videoId else { return }
+        guard let start = card.bestStartSeconds, start > 0 else { return }
         var components = URLComponents()
         components.scheme = "https"
         components.host = "www.youtube.com"
         components.path = "/watch"
         var items = [URLQueryItem(name: "v", value: videoId)]
-        if let start = card.bestStartSeconds, start > 0 {
-            items.append(URLQueryItem(name: "t", value: "\(start)s"))
-        }
+        items.append(URLQueryItem(name: "t", value: "\(start)s"))
         components.queryItems = items
         if let url = components.url {
             openURL(url)
@@ -2113,16 +2114,10 @@ struct RootView_Previews: PreviewProvider {
         if state == .showingEssentials {
             vm.essentialsCommentAnalysis = CommentInsights(
                 videoId: "TestId",
-                
+                viewerTips: ["Keep captions on for faster skim."],
                 overallCommentSentimentScore: 0.6,
                 contentDepthScore: 0.7,
-                suggestedQuestions: ["Best first step?", "Tools needed?", "Pitfalls to avoid?"],
-                contentHighlights: ["Shares concrete metrics for measuring ROI."],
-                contentGaps: ["Skips pricing details for small teams."],
-                commentHighlights: ["Viewers appreciate seeing real dashboards."],
-                commentWarnings: ["Some think the pacing is slow."],
-                spamRatio: 0.1,
-                commentsAnalyzed: 30
+                suggestedQuestions: ["Best first step?", "Tools needed?", "Pitfalls to avoid?"]
             )
         }
         if state == .showingAskAnything {

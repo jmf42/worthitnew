@@ -80,13 +80,17 @@
 				Utils/URLParser.swift,
 				Views/AskAnythingScreen.swift,
 				Views/CommonUI.swift,
+				Views/DecisionCardView.swift,
 				Views/EssentialsScreen.swift,
 				Views/InitialScreen.swift,
 				Views/PaywallCard.swift,
+				Views/PaywallView.swift,
 				Views/ProcessingView.swift,
+				Views/RecentVideosCenterModal.swift,
 				Views/RootView.swift,
 				Views/SentimentSpectrumView.swift,
 				Views/ShareOverlay.swift,
+				Views/StartOptionsView.swift,
 			);
 			target = 3F1624022DE2395E0020E9C5 /* Share */;
 		};

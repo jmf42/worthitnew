@@ -65,10 +65,15 @@ class MainViewModel: ObservableObject {
     @Published var scoreBreakdownDetails: ScoreBreakdown?
     /// Quick metrics returned by the light‑weight GPT pass before a full comment scan
     @Published var essentialsCommentAnalysis: EssentialsCommentAnalysis?
+    /// Decision card data shown on the root overlay
+    @Published var decisionCardModel: DecisionCardModel?
+    /// Flag to trigger the decision card overlay once per presentation
+    @Published var shouldPromptDecisionCard: Bool = false
 
     @Published var qaMessages: [ChatMessage] = []
     @Published var qaInputText: String = ""
     @Published var isQaLoading: Bool = false
+    @Published var shouldPresentScoreBreakdown: Bool = false
 
     // New: Categorized comment lists for UI
     @Published var funnyComments: [String] = []
@@ -134,6 +139,15 @@ class MainViewModel: ObservableObject {
     private var timeSavedVideoIDs: Set<String> = []
     private var timeSavedLogEntries: [TimeSavedLogEntry] = []
     private let maxTimeSavedLogEntries = 200
+
+    // MARK: - Score breakdown presentation
+    func requestScoreBreakdownPresentation() {
+        shouldPresentScoreBreakdown = true
+    }
+
+    func consumeScoreBreakdownRequest() {
+        shouldPresentScoreBreakdown = false
+    }
     private let logRetentionDays = 120
 
     private var appCalendar: Calendar = {
@@ -399,9 +413,13 @@ class MainViewModel: ObservableObject {
             // Calculate score and update progress
             self.calculateAndSetWorthItScore()
             self.processingProgress = 1.0
+            // Reset decision card for this video and rebuild it for cached results
+            self.decisionCardModel = nil
+            self.shouldPromptDecisionCard = false
 
             // Show options immediately without waiting
             self.viewState = .showingInitialOptions
+            self.refreshDecisionCardIfPossible(videoId: videoId)
             // Add to processed set so future loads are instant
             processedVideoIDsThisSession.insert(videoId)
             releaseUsageReservation(for: videoId, revertIfNeeded: false)
@@ -410,6 +428,8 @@ class MainViewModel: ObservableObject {
 
         // No cache hit: enter processing state
         self.viewState = .processing
+        self.decisionCardModel = nil
+        self.shouldPromptDecisionCard = false
         // Only start minimum display timer if we don't have cached results
         startMinimumDisplayTimer()
 
@@ -744,6 +764,7 @@ class MainViewModel: ObservableObject {
 
             // Score
             self.calculateAndSetWorthItScore()
+            self.refreshDecisionCardIfPossible(videoId: videoId)
 
             // Done
             self.updateProgress(1.0, message: "Analysis Complete")
@@ -1096,6 +1117,16 @@ class MainViewModel: ObservableObject {
         latestTimeSavedEvent = nil
     }
 
+    // MARK: - Decision Card helpers
+    func presentDecisionCard(_ model: DecisionCardModel) {
+        decisionCardModel = model
+        shouldPromptDecisionCard = true
+    }
+
+    func consumeDecisionCardPrompt() {
+        shouldPromptDecisionCard = false
+    }
+
     private func calculateAndSetWorthItScore() {
         let depthNormalized = essentialsCommentAnalysis?.contentDepthScore ?? 0.6 // rough transcript-only heuristic
 
@@ -1128,7 +1159,13 @@ class MainViewModel: ObservableObject {
                 finalScore: roundedScore,
                 videoTitle: analysisResult?.videoTitle ?? currentVideoTitle ?? "Video",
                 positiveCommentThemes: positiveThemes,
-                negativeCommentThemes: negativeThemes
+                negativeCommentThemes: negativeThemes,
+                contentHighlights: analysisResult?.takeaways ?? [],
+                contentWatchouts: [],
+                commentHighlights: positiveThemes,
+                commentWatchouts: negativeThemes,
+                spamRatio: nil,
+                commentsAnalyzed: analysisResult?.topThemes?.count
             )
         } else {
             // PATCH: No comments, score is 100% content depth
@@ -1143,12 +1180,100 @@ class MainViewModel: ObservableObject {
                 finalScore: roundedScore,
                 videoTitle: analysisResult?.videoTitle ?? currentVideoTitle ?? "Video",
                 positiveCommentThemes: [],
-                negativeCommentThemes: []
+                negativeCommentThemes: [],
+                contentHighlights: analysisResult?.takeaways ?? [],
+                contentWatchouts: [],
+                commentHighlights: [],
+                commentWatchouts: [],
+                spamRatio: nil,
+                commentsAnalyzed: nil
             )
         }
 
         Logger.shared.info("Worth-It Score calculated: \(self.worthItScore ?? -1). Depth: \(depthNormalized), Comment Sentiment: \(essentialsCommentAnalysis?.overallCommentSentimentScore ?? 0)", category: .services)
     }
+
+    // MARK: - Decision Card Construction
+    private func refreshDecisionCardIfPossible(videoId: String) {
+        guard viewState == .showingInitialOptions else { return }
+        guard let analysis = analysisResult else { return }
+        // Avoid re-presenting if a card is already set
+        guard decisionCardModel == nil else { return }
+
+        let resolvedScore = worthItScore ?? 0
+        let verdict = verdictForScore(resolvedScore)
+        let confidence = confidenceForData()
+
+        let depthDetail: String = {
+            if let takeaway = analysis.takeaways?.first, !takeaway.isEmpty {
+                return takeaway
+            }
+            let depthPercent = Int((essentialsCommentAnalysis?.contentDepthScore ?? 0) * 100)
+            return depthPercent > 0 ? "Depth: \(depthPercent)%" : "Depth insights ready"
+        }()
+
+        let commentsCount = llmAnalyzedComments.count
+        let sentimentPercent = essentialsCommentAnalysis?.overallCommentSentimentScore.map { Int($0 * 100) }
+        var commentsDetail = commentsCount > 0 ? "\(commentsCount) comments analyzed" : "Comments pending"
+        if let sent = sentimentPercent {
+            commentsDetail = "\(commentsDetail) · Sentiment \(sent)%"
+        }
+
+        let jumpDetail = "Jump available soon"
+
+        let depthChip = DecisionProofChip(
+            iconName: "doc.text.magnifyingglass",
+            title: "Depth",
+            detail: depthDetail
+        )
+
+        let commentsChip = DecisionProofChip(
+            iconName: "bubble.left.and.bubble.right.fill",
+            title: "Comments",
+            detail: commentsDetail
+        )
+
+        let jumpChip = DecisionProofChip(
+            iconName: "arrow.right.circle.fill",
+            title: "Best part",
+            detail: jumpDetail
+        )
+
+        let reasonText = analysis.takeaways?.first ?? "Your Worth-It verdict is ready."
+        let model = DecisionCardModel(
+            title: analysis.videoTitle ?? currentVideoTitle ?? "Video",
+            reason: reasonText,
+            score: resolvedScore,
+            depthChip: depthChip,
+            commentsChip: commentsChip,
+            jumpChip: jumpChip,
+            verdict: verdict,
+            confidence: confidence,
+            timeValue: nil,
+            thumbnailURL: currentVideoThumbnailURL,
+            bestStartSeconds: nil
+        )
+
+        presentDecisionCard(model)
+    }
+
+    private func verdictForScore(_ score: Double) -> DecisionVerdict {
+        if score >= 70 { return .worthIt }
+        if score <= 45 { return .skip }
+        return .maybe
+    }
+
+    private func confidenceForData() -> DecisionConfidence {
+        if !llmAnalyzedComments.isEmpty, analysisResult != nil {
+            return DecisionConfidence(level: .high)
+        }
+        if analysisResult != nil {
+            return DecisionConfidence(level: .medium)
+        }
+        return DecisionConfidence(level: .low)
+    }
+
+    
 
     // MARK: - Fallbacks
     private func generateFallbackSuggestedQuestions(from transcript: String?) -> [String] {
@@ -1438,6 +1563,18 @@ class MainViewModel: ObservableObject {
 
     func paywallManageTapped() {
         AnalyticsService.shared.logPaywallManageTapped()
+    }
+
+    func paywallPlanSelected(productId: String) {
+        AnalyticsService.shared.logPaywallPlanSelected(productId: productId)
+    }
+
+    func paywallCheckoutStarted(productId: String, source: String, isTrial: Bool) {
+        AnalyticsService.shared.logPaywallCheckoutStarted(productId: productId, source: source, isTrial: isTrial)
+    }
+
+    func paywallMaybeLaterTapped(trialEligible: Bool = false, trialViewPresented: Bool = false) {
+        AnalyticsService.shared.logPaywallMaybeLater(trialEligible: trialEligible, trialViewPresented: trialViewPresented)
     }
 
     func consumeManageSubscriptionsDeepLinkRequest() {

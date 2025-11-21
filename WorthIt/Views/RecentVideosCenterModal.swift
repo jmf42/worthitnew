@@ -264,7 +264,7 @@ struct RecentVideosCenterModal: View {
     }
 
     private var statsSection: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Your latest insights")
                     .font(Theme.Font.subheadline.weight(.semibold))
@@ -279,7 +279,7 @@ struct RecentVideosCenterModal: View {
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Theme.Color.sectionBackground.opacity(0.55))
@@ -288,6 +288,7 @@ struct RecentVideosCenterModal: View {
                             .stroke(Theme.Color.primaryText.opacity(0.08), lineWidth: 0.8)
                     )
             )
+            .layoutPriority(1)
 
             VStack(alignment: .center, spacing: 6) {
                 Text("Average score")
@@ -304,7 +305,7 @@ struct RecentVideosCenterModal: View {
                 }
             }
             .padding(14)
-            .frame(width: 140)
+            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Theme.Color.sectionBackground.opacity(0.55))
@@ -315,7 +316,7 @@ struct RecentVideosCenterModal: View {
             )
         }
         .padding(.horizontal, 24)
-        .padding(.top, 12)
+        .padding(.top, 10)
     }
 
     private var sortSection: some View {
@@ -557,3 +558,16 @@ struct RecentVideosCenterModal: View {
         return looksLikeId ? "" : t
     }
 }
+
+#if DEBUG
+struct RecentVideosCenterModal_Previews: PreviewProvider {
+    static var previews: some View {
+        RecentVideosCenterModal(
+            onDismiss: {},
+            onSelect: { _ in },
+            borderGradient: Theme.Gradient.appBluePurple
+        )
+        .preferredColorScheme(.dark)
+    }
+}
+#endif

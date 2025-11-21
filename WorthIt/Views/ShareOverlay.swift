@@ -1258,3 +1258,46 @@ private struct ActivityView: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+
+#if DEBUG
+private struct ShareOverlayPreviewContainer: View {
+    @StateObject private var viewModel = MainViewModel(
+        apiManager: APIManager(),
+        cacheManager: CacheManager.shared,
+        subscriptionManager: SubscriptionManager(),
+        usageTracker: UsageTracker.shared
+    )
+
+    var body: some View {
+        ZStack {
+            Theme.Color.darkBackground.ignoresSafeArea()
+            VStack {
+                Spacer()
+                ShareOverlayButton()
+                    .environmentObject(viewModel)
+            }
+        }
+        .onAppear {
+            viewModel.viewState = .showingInitialOptions
+            viewModel.worthItScore = 82
+            viewModel.currentVideoTitle = "Preview: Unlocking AI Productivity"
+            viewModel.analysisResult = ContentAnalysis(
+                longSummary: "A concise walkthrough of the tools and workflows that speed up creative work.",
+                videoTitle: "Unlocking AI Productivity",
+                takeaways: [
+                    "Time-blocking beats context switching.",
+                    "Use structured prompts for consistent results.",
+                    "Automate repetitive edits."
+                ]
+            )
+        }
+    }
+}
+
+struct ShareOverlay_Previews: PreviewProvider {
+    static var previews: some View {
+        ShareOverlayPreviewContainer()
+            .preferredColorScheme(.dark)
+    }
+}
+#endif

@@ -299,6 +299,12 @@ struct ScoreBreakdown: Identifiable {
     let videoTitle: String
     let positiveCommentThemes: [String]
     let negativeCommentThemes: [String]
+    let contentHighlights: [String]
+    let contentWatchouts: [String]
+    let commentHighlights: [String]
+    let commentWatchouts: [String]
+    let spamRatio: Double?
+    let commentsAnalyzed: Int?
 }
 
 // MARK: - View State Enum
@@ -311,6 +317,52 @@ enum ViewState: Equatable {
     case error
 
     var isProcessing: Bool { self == .processing }
+}
+
+// MARK: - Decision Card Models
+/// Data used by the decision card UI to present a quick verdict and jump link.
+struct DecisionCardModel: Equatable {
+    let title: String
+    let reason: String
+    let score: Double?
+    let depthChip: DecisionProofChip
+    let commentsChip: DecisionProofChip
+    let jumpChip: DecisionProofChip
+    let verdict: DecisionVerdict
+    let confidence: DecisionConfidence
+    let timeValue: String?
+    let thumbnailURL: URL?
+    let bestStartSeconds: Int?
+}
+
+struct DecisionProofChip: Equatable {
+    let iconName: String
+    let title: String
+    let detail: String
+}
+
+enum DecisionVerdict: Equatable {
+    case worthIt
+    case skip
+    case maybe
+}
+
+struct DecisionConfidence: Equatable {
+    enum Level {
+        case high
+        case medium
+        case low
+    }
+
+    let level: Level
+
+    var label: String {
+        switch level {
+        case .high: return "High confidence"
+        case .medium: return "Medium confidence"
+        case .low: return "Estimated"
+        }
+    }
 }
 
 // MARK: - UserFriendlyError Struct

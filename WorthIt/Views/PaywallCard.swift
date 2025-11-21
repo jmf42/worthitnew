@@ -27,30 +27,30 @@ struct PaywallCard: View {
         subscriptionManager.products.first { $0.id == AppConstants.subscriptionProductAnnualID }
     }
 
-    private var weeklyProduct: Product? {
-        subscriptionManager.products.first { $0.id == AppConstants.subscriptionProductWeeklyID }
+    private var monthlyProduct: Product? {
+        subscriptionManager.products.first { $0.id == AppConstants.subscriptionProductMonthlyID }
     }
 
     private var annualSavingsPercent: Int? {
         guard
             let annual = annualProduct,
-            let weekly = weeklyProduct
+            let monthly = monthlyProduct
         else {
             return nil
         }
 
         let annualPrice = NSDecimalNumber(decimal: annual.price).doubleValue
-        let weeklyPrice = NSDecimalNumber(decimal: weekly.price).doubleValue
-        guard annualPrice > 0, weeklyPrice > 0 else {
+        let monthlyPrice = NSDecimalNumber(decimal: monthly.price).doubleValue
+        guard annualPrice > 0, monthlyPrice > 0 else {
             return nil
         }
 
-        let annualIfWeekly = weeklyPrice * 52
-        guard annualIfWeekly > 0 else {
+        let annualIfMonthly = monthlyPrice * 12
+        guard annualIfMonthly > 0 else {
             return nil
         }
 
-        let savingsRatio = 1 - (annualPrice / annualIfWeekly)
+        let savingsRatio = 1 - (annualPrice / annualIfMonthly)
         let percentage = Int((savingsRatio * 100).rounded())
         return percentage > 0 ? percentage : nil
     }
@@ -62,7 +62,7 @@ struct PaywallCard: View {
 
     private var plans: [PaywallPlanOption] {
         let annual = annualProduct
-        let weekly = weeklyProduct
+        let monthly = monthlyProduct
 
         let options: [PaywallPlanOption] = [
             PaywallPlanOption(
@@ -76,12 +76,12 @@ struct PaywallCard: View {
                 footnote: nil
             ),
             PaywallPlanOption(
-                id: AppConstants.subscriptionProductWeeklyID,
-                title: "Weekly",
-                priceText: weekly?.displayPrice ?? "Loading…",
-                detailText: "Cancel anytime",
+                id: AppConstants.subscriptionProductMonthlyID,
+                title: "Monthly",
+                priceText: monthly?.displayPrice ?? "Loading…",
+                detailText: "Cancel anytime. Billed monthly.",
                 trailingBadge: nil,
-                product: weekly,
+                product: monthly,
                 isRecommended: false,
                 footnote: "Stay flexible. Cancel anytime."
             )
@@ -217,15 +217,15 @@ struct PaywallCard: View {
     }
 
     private var momentumSection: some View {
-        let metrics = context.metrics
+        let snapshot = context.usageSnapshot
         return VStack(alignment: .leading, spacing: 6) {
             Text("Momentum snapshot")
                 .font(Theme.Font.captionBold)
                 .foregroundColor(Theme.Color.secondaryText)
 
             HStack(spacing: 10) {
-                momentumTile(title: "Minutes saved", value: formattedMinutes(metrics.totalMinutesSaved))
-                momentumTile(title: "Day streak", value: "\(metrics.activeStreakDays)")
+                momentumTile(title: "Analyses today", value: "\(snapshot.count)/\(snapshot.limit)")
+                momentumTile(title: "Free left", value: "\(max(0, snapshot.remaining))")
             }
         }
         .padding(12)
@@ -801,8 +801,8 @@ struct PaywallPlanOption: Identifiable, Equatable {
 
     var placeholderPrice: String {
         switch id {
-        case AppConstants.subscriptionProductWeeklyID:
-            return "$2.99 / week"
+        case AppConstants.subscriptionProductMonthlyID:
+            return "$9.99 / month"
         case AppConstants.subscriptionProductAnnualID:
             return "$99.99 / year"
         default:
@@ -810,3 +810,36 @@ struct PaywallPlanOption: Identifiable, Equatable {
         }
     }
 }
+
+#if DEBUG
+struct PaywallCard_Previews: PreviewProvider {
+    private static let subscriptionManager = SubscriptionManager()
+    private static let viewModel = MainViewModel(
+        apiManager: APIManager(),
+        cacheManager: CacheManager.shared,
+        subscriptionManager: subscriptionManager,
+        usageTracker: UsageTracker.shared
+    )
+
+    private static let sampleContext = MainViewModel.PaywallContext(
+        reason: .manual,
+        usageSnapshot: UsageTracker.Snapshot(
+            date: Date(),
+            count: 4,
+            limit: 5,
+            remaining: 1,
+            videoIds: ["abc123", "def456", "ghi789", "jkl000"]
+        )
+    )
+
+    static var previews: some View {
+        ZStack {
+            Theme.Color.darkBackground.ignoresSafeArea()
+            PaywallCard(context: sampleContext, isInExtension: false)
+                .environmentObject(viewModel)
+                .environmentObject(subscriptionManager)
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+#endif
