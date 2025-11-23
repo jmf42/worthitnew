@@ -21,6 +21,11 @@ struct EssentialsScreen: View {
                         gemsSection(gems: gems)
                     }
 
+                    // Chapters section
+                    if !viewModel.chapters.isEmpty || viewModel.isChaptersLoading {
+                        chaptersSection()
+                    }
+
                     CommunityNarrativeView(analysis: analysis, selectedCategory: $selectedCategory, isShowingCategorySheet: $isShowingCategorySheet)
                 } else {
                     // Show proper app sections with clear loading messages
@@ -42,6 +47,13 @@ struct EssentialsScreen: View {
             Logger.shared.debug("EssentialsScreen appeared.", category: .ui)
             // Pin navigation to Essentials so background tasks don't kick us away
             viewModel.currentScreenOverride = .showingEssentials
+
+            // Load chapters if not already loaded
+            if viewModel.chapters.isEmpty && !viewModel.isChaptersLoading {
+                Task {
+                    await viewModel.loadChapters()
+                }
+            }
         }
         .onDisappear { if viewModel.currentScreenOverride == .showingEssentials { viewModel.currentScreenOverride = nil } }
         // Present category details as a sheet to avoid nested navigation bars and duplicate Back buttons
@@ -137,22 +149,26 @@ struct EssentialsScreen: View {
                             if !narrativeSections.isEmpty {
                                 VStack(alignment: .leading, spacing: 16) {
                                     ForEach(narrativeSections) { section in
-                                        VStack(alignment: .leading, spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 12) {
                                             if let title = section.title {
                                                 Text(title)
                                                     .font(Theme.Font.subheadlineBold)
                                                     .foregroundColor(Theme.Color.primaryText)
                                                     .accessibilityAddTraits(.isHeader)
+                                                    .padding(.bottom, 4)
                                             }
 
                                             if !section.paragraphs.isEmpty {
-                                                ForEach(section.paragraphs, id: \.self) { paragraph in
-                                                    Text(paragraph)
-                                                        .font(Theme.Font.body)
-                                                        .foregroundColor(Theme.Color.primaryText.opacity(0.95))
-                                                        .lineSpacing(4)
-                                                        .lineLimit(isLongSummaryExpanded ? nil : 3)
-                                                        .transition(.opacity.combined(with: .move(edge: .top)))
+                                                VStack(alignment: .leading, spacing: 14) {
+                                                    ForEach(section.paragraphs, id: \.self) { paragraph in
+                                                        Text(paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
+                                                            .font(Theme.Font.body)
+                                                            .foregroundColor(Theme.Color.primaryText.opacity(0.95))
+                                                            .lineSpacing(6)
+                                                            .lineLimit(isLongSummaryExpanded ? nil : 3)
+                                                            .fixedSize(horizontal: false, vertical: true)
+                                                            .transition(.opacity.combined(with: .move(edge: .top)))
+                                                    }
                                                 }
                                             }
 
@@ -384,6 +400,25 @@ struct EssentialsScreen: View {
         }
     }
 
+    @ViewBuilder
+    private func chaptersSection() -> some View {
+        SectionView(title: "Chapters", icon: "list.bullet.rectangle") {
+            if viewModel.isChaptersLoading {
+                ProgressView()
+                    .tint(Theme.Color.accent)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 20)
+            } else {
+                ChaptersView(
+                    chapters: viewModel.chapters,
+                    onChapterTap: { startTime in
+                        viewModel.jumpToChapter(at: startTime)
+                    }
+                )
+            }
+        }
+    }
+
 private func parseLongSummary(_ text: String) -> (highlights: [String], narrative: String) {
     var highlights: [String] = []
     var narrativeLines: [String] = []
@@ -408,7 +443,14 @@ private func parseLongSummary(_ text: String) -> (highlights: [String], narrativ
             let line = trimmedLine(at: index)
             if line.isEmpty { break }
 
-            if line.hasPrefix("•") || line.hasPrefix("-") || line.hasPrefix("∙") || line.hasPrefix("*") {
+            // Handle both "• " and "•" formats, plus other bullet types
+            if line.hasPrefix("• ") || line.hasPrefix("- ") || line.hasPrefix("∙ ") || line.hasPrefix("* ") {
+                // Bullet with space - drop 2 characters
+                let bulletBody = line.dropFirst(2).trimmingCharacters(in: .whitespaces)
+                if !bulletBody.isEmpty { highlights.append(String(bulletBody)) }
+                index += 1
+            } else if line.hasPrefix("•") || line.hasPrefix("-") || line.hasPrefix("∙") || line.hasPrefix("*") {
+                // Bullet without space - drop 1 character and trim
                 let bulletBody = line.dropFirst().trimmingCharacters(in: .whitespaces)
                 if !bulletBody.isEmpty { highlights.append(String(bulletBody)) }
                 index += 1
@@ -434,12 +476,47 @@ private func parseLongSummary(_ text: String) -> (highlights: [String], narrativ
     // Build narrative text
     var narrative = narrativeLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 
-    // If the narrative is one long line, add gentle breaks after sentence enders
+    // Clean up instruction text that might be included
+    narrative = narrative
+        .replacingOccurrences(of: "Two lines of natural prose:", with: "")
+        .replacingOccurrences(of: "Then 2–4 natural sentences, each on its own line", with: "")
+        .replacingOccurrences(of: "Do not write the literal characters \"\\n\" or \"/n\"; just separate lines", with: "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // If the narrative is one long line, add breaks after sentence enders to create paragraphs
     if !narrative.contains("\n") {
-        narrative = narrative
-            .replacingOccurrences(of: ". ", with: ".\n")
-            .replacingOccurrences(of: "? ", with: "?\n")
-            .replacingOccurrences(of: "! ", with: "!\n")
+        // Split into sentences and group them into paragraphs
+        var sentences = narrative
+            .components(separatedBy: ". ")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { $0.hasSuffix(".") ? $0 : $0 + "." }
+
+        // Group sentences into paragraphs (2-3 sentences each)
+        var paragraphs: [String] = []
+        var currentParagraph = ""
+        var sentenceCount = 0
+
+        for sentence in sentences {
+            if sentenceCount > 0 {
+                currentParagraph += " "
+            }
+            currentParagraph += sentence
+            sentenceCount += 1
+
+            // Create a new paragraph after 2-3 sentences
+            if sentenceCount >= 2 && (currentParagraph.count > 200 || sentenceCount >= 3) {
+                paragraphs.append(currentParagraph)
+                currentParagraph = ""
+                sentenceCount = 0
+            }
+        }
+
+        if !currentParagraph.isEmpty {
+            paragraphs.append(currentParagraph)
+        }
+
+        narrative = paragraphs.joined(separator: "\n\n")
     }
 
     // Collapse triple+ blank lines (just in case)
@@ -468,7 +545,10 @@ private func splitIntoParagraphs(_ text: String) -> [String] {
         let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
             if !currentLines.isEmpty {
-                paragraphs.append(currentLines.joined(separator: "\n"))
+                let paragraph = currentLines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !paragraph.isEmpty {
+                    paragraphs.append(paragraph)
+                }
                 currentLines.removeAll()
             }
         } else {
@@ -477,7 +557,10 @@ private func splitIntoParagraphs(_ text: String) -> [String] {
     }
 
     if !currentLines.isEmpty {
-        paragraphs.append(currentLines.joined(separator: "\n"))
+        let paragraph = currentLines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !paragraph.isEmpty {
+            paragraphs.append(paragraph)
+        }
     }
 
     return paragraphs
@@ -527,7 +610,14 @@ private func buildNarrativeSections(from narrative: String) -> [SummaryNarrative
             continue
         }
 
-        if lowercased.hasPrefix("•") || lowercased.hasPrefix("-") || lowercased.hasPrefix("∙") {
+        // Handle both "• " and "•" formats, plus other bullet types
+        if lowercased.hasPrefix("• ") || lowercased.hasPrefix("- ") || lowercased.hasPrefix("∙ ") {
+            // Bullet with space - drop 2 characters
+            let bulletText = line.dropFirst(2).trimmingCharacters(in: .whitespaces)
+            if !bulletText.isEmpty { currentBullets.append(bulletText) }
+            continue
+        } else if lowercased.hasPrefix("•") || lowercased.hasPrefix("-") || lowercased.hasPrefix("∙") {
+            // Bullet without space - drop 1 character and trim
             let bulletText = line.dropFirst().trimmingCharacters(in: .whitespaces)
             if !bulletText.isEmpty { currentBullets.append(bulletText) }
             continue
@@ -1005,6 +1095,14 @@ struct EssentialsScreen_Previews: PreviewProvider {
             CommentssentimentSummary: "The community is generally excited and optimistic.",
             topThemes: [CommentTheme(theme: "Great Editing", sentiment: "Positive", sentimentScore: 0.9, exampleComment: "The editing was top-notch!")]
         )
+
+        // Add sample chapters
+        let sampleSnippets = [
+            TranscriptSnippet(text: "Introduction to AI in art", start: 0.0, duration: 45.2),
+            TranscriptSnippet(text: "How AI is changing music production", start: 45.2, duration: 67.8),
+            TranscriptSnippet(text: "Ethical considerations and future implications", start: 113.0, duration: 52.4)
+        ]
+        viewModelWithData.chapters = VideoChapter.createChapters(from: sampleSnippets)
         
         return EssentialsScreen()
             .environmentObject(viewModelWithData)

@@ -55,6 +55,37 @@ struct PaywallCard: View {
         let percentage = Int((savingsRatio * 100).rounded())
         return percentage > 0 ? percentage : nil
     }
+    
+    private var annualSavingsAmount: String? {
+        guard
+            let annual = annualProduct,
+            let weekly = weeklyProduct
+        else {
+            return nil
+        }
+
+        let annualPrice = NSDecimalNumber(decimal: annual.price).doubleValue
+        let weeklyPrice = NSDecimalNumber(decimal: weekly.price).doubleValue
+        guard annualPrice > 0, weeklyPrice > 0 else {
+            return nil
+        }
+
+        // Calculate what you'd pay if you paid weekly for a year
+        let annualIfWeekly = weeklyPrice * 52
+        guard annualIfWeekly > 0 else {
+            return nil
+        }
+
+        let savings = annualIfWeekly - annualPrice
+        guard savings > 0 else {
+            return nil
+        }
+        
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.maximumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: savings))
+    }
 
     private var annualBadgeText: String? {
         guard let percent = annualSavingsPercent else { return nil }
@@ -80,11 +111,11 @@ struct PaywallCard: View {
                 id: AppConstants.subscriptionProductWeeklyID,
                 title: "Weekly",
                 priceText: weekly?.displayPrice ?? "Loading…",
-                detailText: "Cancel anytime. Billed weekly.",
+                detailText: "Billed weekly • Cancel anytime",
                 trailingBadge: nil,
                 product: weekly,
                 isRecommended: false,
-                footnote: "Stay flexible. Cancel anytime."
+                footnote: nil
             )
         ]
         return options
@@ -121,7 +152,7 @@ struct PaywallCard: View {
     private var maxCardWidth: CGFloat { isInExtension ? 320 : 340 }
 
     var body: some View {
-        VStack(spacing: isInExtension ? 16 : 18) {
+        VStack(spacing: isInExtension ? 18 : 20) {
             header
             usageSummary
 
@@ -193,7 +224,7 @@ struct PaywallCard: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 Image("AppLogo")
                     .resizable()
@@ -206,12 +237,31 @@ struct PaywallCard: View {
                     Text("WorthIt Premium")
                         .font(Theme.Font.title3.weight(.semibold))
                         .foregroundColor(Theme.Color.primaryText)
-                    Text("Unlimited breakdowns. Zero waiting for tomorrow.")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
                 }
 
                 Spacer()
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.Color.accent)
+                        .frame(width: 16)
+                    Text("Join 5,000+ Premium users")
+                        .font(Theme.Font.caption2)
+                        .foregroundColor(Theme.Color.secondaryText)
+                }
+                
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.Color.accent.opacity(0.8))
+                        .frame(width: 16)
+                    Text("Cancel anytime • No questions asked")
+                        .font(Theme.Font.caption2)
+                        .foregroundColor(Theme.Color.secondaryText)
+                }
             }
         }
     }
@@ -230,7 +280,7 @@ struct PaywallCard: View {
         let used = min(snapshot.count, dailyLimit)
         let remaining = max(0, dailyLimit - used)
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Free plan • \(dailyLimit) analyses/day")
                     .font(Theme.Font.captionBold)
@@ -243,38 +293,50 @@ struct PaywallCard: View {
 
             ProgressView(value: Double(used), total: Double(dailyLimit))
                 .progressViewStyle(LinearProgressViewStyle(tint: Theme.Color.accent))
-
-            Text("Premium removes the cap so you never wait for tomorrow.")
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.Color.secondaryText)
-
         }
-        .padding(isInExtension ? 12 : 14)
+        .padding(isInExtension ? 10 : 12)
         .background(cardFill(cornerRadius: isInExtension ? 16 : 18))
         .overlay(cardStroke(cornerRadius: isInExtension ? 16 : 18))
     }
 
     private var premiumBenefits: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "infinity")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(Theme.Color.accent)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("WorthIt Premium")
-                    .font(Theme.Font.subheadlineBold)
-                    .foregroundColor(Theme.Color.primaryText)
-                Text("Unlimited breakdowns. Zero waiting for tomorrow.")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Color.secondaryText)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Theme.Color.accent)
+                    Text("Includes:")
+                        .font(Theme.Font.subheadlineBold)
+                        .foregroundColor(Theme.Color.primaryText)
             }
+            
+            VStack(alignment: .leading, spacing: 10) {
+                benefitRow(icon: "infinity", text: "Unlimited video breakdowns, zero waiting for tomorrow")
+                benefitRow(icon: "message.fill", text: "Chat freely with every video transcript")
+                benefitRow(icon: "chart.bar.fill", text: "Deep insights & sentiment analysis")
+            }
+            .padding(.leading, 26)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+    }
+    
+    private func benefitRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(Theme.Color.accent)
+                .frame(width: 18)
+            Text(text)
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.Color.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder
     private var mainExperienceStack: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 20) {
             planSelector
             if let message = infoMessage {
                 Text(message)
@@ -289,7 +351,7 @@ struct PaywallCard: View {
     }
 
     private var planSelector: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Pick your plan")
                 .font(Theme.Font.subheadlineBold)
                 .foregroundColor(Theme.Color.primaryText)
@@ -340,20 +402,6 @@ struct PaywallCard: View {
         .animation(.easeInOut(duration: 0.25), value: showLoadingSkeleton)
     }
 
-    @ViewBuilder
-    private var selectedPlanSummary: some View {
-        if let plan = selectedPlan {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Selected plan")
-                    .font(Theme.Font.captionBold)
-                    .foregroundColor(Theme.Color.secondaryText)
-                Text("\(plan.title) • \(plan.priceText)")
-                    .font(Theme.Font.subheadline.weight(.semibold))
-                    .foregroundColor(Theme.Color.primaryText)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 
     private func planSummaryContent(plan: PaywallPlanOption, showSelection: Bool) -> some View {
         let isSelected = selectedPlan?.id == plan.id
@@ -429,20 +477,37 @@ struct PaywallCard: View {
     }
 
     private func priceLabel(for plan: PaywallPlanOption, loaded: Bool) -> some View {
-        Group {
-            if loaded {
-                Text(plan.priceText)
-            } else if plan.product == nil, plan.priceText.lowercased() != "loading…" {
-                Text(plan.priceText)
-                    .foregroundColor(Theme.Color.secondaryText)
-            } else {
-                Text(plan.placeholderPrice)
-                    .redacted(reason: .placeholder)
+        VStack(alignment: .leading, spacing: 4) {
+            Group {
+                if loaded {
+                    Text(plan.priceText)
+                } else if plan.product == nil, plan.priceText.lowercased() != "loading…" {
+                    Text(plan.priceText)
+                        .foregroundColor(Theme.Color.secondaryText)
+                } else {
+                    Text(plan.placeholderPrice)
+                        .redacted(reason: .placeholder)
+                }
+            }
+            .font(Theme.Font.title3.weight(.bold))
+            .foregroundColor(Theme.Color.primaryText)
+            .animation(.easeInOut(duration: 0.2), value: loaded)
+            
+            // Show savings comparison for annual plan
+            if plan.id == AppConstants.subscriptionProductAnnualID,
+               let savingsAmount = annualSavingsAmount,
+               let savingsPercent = annualSavingsPercent,
+               loaded {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Save \(savingsAmount)/year")
+                        .font(Theme.Font.caption.weight(.semibold))
+                        .foregroundColor(Theme.Color.accent)
+                    Text("vs \(weeklyProduct?.displayPrice ?? "$2.99")/week")
+                        .font(Theme.Font.caption2)
+                        .foregroundColor(Theme.Color.secondaryText)
+                }
             }
         }
-        .font(Theme.Font.title3.weight(.bold))
-        .foregroundColor(Theme.Color.primaryText)
-        .animation(.easeInOut(duration: 0.2), value: loaded)
     }
 
     private var primaryButtonSkeleton: some View {
@@ -485,7 +550,7 @@ struct PaywallCard: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         } else {
-                            Text("Continue with \(selectedPlan?.title ?? "plan")")
+                            Text("Start Premium")
                                 .font(Theme.Font.body.weight(.semibold))
                                 .foregroundColor(.white)
                         }
@@ -495,8 +560,6 @@ struct PaywallCard: View {
                 .disabled(purchaseInFlight != nil || selectedPlan?.product == nil)
                 .animation(.easeInOut(duration: 0.2), value: purchaseInFlight)
             }
-
-            selectedPlanSummary
 
             Button(action: dismissTapped) {
                 Text("Maybe later")
@@ -793,7 +856,7 @@ struct PaywallCard_Previews: PreviewProvider {
         usageSnapshot: UsageTracker.Snapshot(
             date: Date(),
             count: 4,
-            limit: 5,
+            limit: 3,
             remaining: 1,
             videoIds: ["abc123", "def456", "ghi789", "jkl000"]
         )

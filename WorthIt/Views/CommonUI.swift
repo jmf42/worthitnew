@@ -17,7 +17,7 @@ struct WorthItToolbarTitle: View {
                 .frame(width: 30, height: 30)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-            Text("WorthIt.AI")
+            Text("WorthIt")
                 .font(Theme.Font.toolbarTitle)
                 .foregroundStyle(Theme.Gradient.appLogoText())
                 .shadow(color: Color.black.opacity(0.3), radius: 1)
@@ -245,6 +245,96 @@ extension View {
     func enableSwipeBack() -> some View {
         // Provide an empty view behind to avoid layout conflicts
         self.modifier(SwipeBackModifier(previousScreen: AnyView(EmptyView())))
+    }
+}
+
+// MARK: - Chapters Components
+struct ChaptersView: View {
+    let chapters: [VideoChapter]
+    let onChapterTap: (Double) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "list.bullet.rectangle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(Theme.Color.accent)
+                Text("Chapters")
+                    .font(Theme.Font.headline)
+                    .foregroundColor(Theme.Color.primaryText)
+            }
+
+            if chapters.isEmpty {
+                Text("No chapters available")
+                    .font(Theme.Font.body)
+                    .foregroundColor(Theme.Color.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 20)
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(chapters) { chapter in
+                        ChapterRow(
+                            chapter: chapter,
+                            onTap: { onChapterTap(chapter.startTime) }
+                        )
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+struct ChapterRow: View {
+    let chapter: VideoChapter
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                // Timestamp badge
+                Text(chapter.timestampString)
+                    .font(.system(.subheadline, design: .monospaced))
+                    .fontWeight(.semibold)
+                    .foregroundColor(Theme.Color.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Theme.Color.accent.opacity(0.15))
+                    )
+
+                // Title and duration
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(chapter.title)
+                        .font(Theme.Font.subheadlineBold)
+                        .foregroundColor(Theme.Color.primaryText)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+
+                    Text(String(format: "%.1fs", chapter.duration))
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.Color.secondaryText)
+                }
+
+                Spacer()
+
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(Theme.Color.accent)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Theme.Color.primaryText.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Theme.Color.primaryText.opacity(0.1), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 

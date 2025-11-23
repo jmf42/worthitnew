@@ -2,415 +2,401 @@ import SwiftUI
 
 // MARK: - Decision Card
 struct DecisionCardView: View {
+    @EnvironmentObject var viewModel: MainViewModel
+
     let model: DecisionCardModel
     let onPrimaryAction: () -> Void
     let onSecondaryAction: () -> Void
     let onClose: () -> Void
+    let onBestMoment: (() -> Void)?
 
     @State private var animateIn = false
     @State private var showGaugeBreakdown = false
     @State private var gaugeAnimationCompleted = false
+    @State private var highlightPulse = false
 
-    private var brandGradient: LinearGradient { Theme.Gradient.appLogoText() }
-    private let mediaHeight: CGFloat = 68
+    // Standard border gradient used throughout the app – match app icon cyan → blue → purple
+    private var standardBorderGradient: LinearGradient {
+        Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    
+    // Verdict-based theme colors
+    private var verdictColor: Color {
+        switch model.verdict {
+        case .worthIt: return Theme.Color.success
+        case .skip: return Theme.Color.error
+        case .maybe: return Theme.Color.warning
+        @unknown default: return Theme.Color.secondaryText
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            headerSection
-                .padding(.horizontal, 22)
-                .padding(.top, 22)
-                .padding(.bottom, 10)
-
-            Divider()
-                .overlay(Color.white.opacity(0.12))
-                .padding(.horizontal, 18)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    snapshotSection
-                    learningsSection
-                    dataGrid
-                }
-                .padding(22)
+            // 1. Hero Section: Verdict Badge, Score & Reason (compact)
+            heroSection
+                .padding(.horizontal, 20) // Wider text area
+                .padding(.top, 16) // Uniform spacing from top border
+            
+            // 3. Insights: Compact Learnings
+            if !model.learnings.isEmpty {
+                learningsSection
+                    .padding(.horizontal, 20) // Align with hero
+                    .padding(.top, 12) // Tighter spacing
             }
-            .scrollIndicators(.hidden)
 
+            // 4. Actions: Buttons
             footerButtons
-                .padding(.horizontal, 22)
-                .padding(.top, 6)
-                .padding(.bottom, 18)
+                .padding(.horizontal, 20) // Align with rest
+                .padding(.top, 20) // Balanced separation
+                .padding(.bottom, 16) // Matches top spacing
         }
-        .background(cardBackground)
-        .overlay(closeButton, alignment: .topTrailing)
+        .frame(maxWidth: 500) // Constrain width on iPad
+        .background(liquidGlassBackground)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: .black.opacity(0.25), radius: 18, y: 12)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 28)
-        .scaleEffect(animateIn ? 1 : 0.94)
+        .overlay(edgeHighlightOverlay)
+        .overlay(
+            // Inner subtle highlight for 3D depth
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
+                .padding(0.5)
+        )
+        .overlay(alignment: .topTrailing) {
+            closeButton
+                .padding(.top, 12)
+                .padding(.trailing, 12)
+        }
+        // 4. Balanced Shadow (Depth + Glow)
+        .shadow(color: .black.opacity(0.5), radius: 35, y: 18)
+        .shadow(color: verdictColor.opacity(0.12), radius: 25, y: 0) // Refined color glow
+        .offset(y: -4) // Slight lift for better shadow breathing room
+        .scaleEffect(animateIn ? 1 : 0.96)
         .opacity(animateIn ? 1 : 0)
         .onAppear {
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                animateIn = true
+            // Subtle breathing specular highlight
+            withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
+                highlightPulse = true
+            }
+            // Smooth reveal animation when card appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) {
+                    animateIn = true
+                }
             }
         }
     }
 
-    // MARK: - Sections
-
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            brandMark
-
-            HStack(alignment: .center, spacing: 14) {
-                thumbnail(size: CGSize(width: 112, height: mediaHeight))
-
-                Spacer()
-
-                gaugeView
-                    .frame(width: mediaHeight, height: mediaHeight)
+    // MARK: - Liquid Glass Background & Lighting
+    private var liquidGlassBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        
+        return ZStack {
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color.black.opacity(0.45)))
+            
+            verdictColor
+                .opacity(0.08)
+                .blur(radius: 110)
+            
+            Theme.Gradient.brandSheen()
+                .opacity(0.06)
+            
+            breathingHighlight
+            
+            NoiseOverlay()
+                .blendMode(.softLight)
+                .clipShape(shape)
+        }
+    }
+    
+    private var breathingHighlight: some View {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(highlightPulse ? 0.18 : 0.05),
+                        Color.white.opacity(0.01)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .blur(radius: 35)
+            .blendMode(.screen)
+    }
+    
+    private var edgeHighlightOverlay: some View {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.6),
+                        Color.white.opacity(0.2),
+                        Color.clear
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
+            .blendMode(.screen)
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.35), lineWidth: 1)
+                    .blur(radius: 1.2)
+                    .offset(x: 0.4, y: 0.9)
+                    .mask(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    )
+            )
+    }
+    
+    private struct NoiseOverlay: View {
+        var body: some View {
+            Canvas { context, size in
+                let density = Int((size.width * size.height) / 700)
+                for _ in 0..<density {
+                    let x = CGFloat.random(in: 0...size.width)
+                    let y = CGFloat.random(in: 0...size.height)
+                    let rect = CGRect(x: x, y: y, width: 1, height: 1)
+                    let opacity = Double.random(in: 0.02...0.06)
+                    context.fill(Path(rect), with: .color(.white.opacity(opacity)))
+                }
             }
+            .allowsHitTesting(false)
+            .opacity(0.12)
         }
     }
 
-    private var brandMark: some View {
-        HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.Color.sectionBackground.opacity(0.75))
+    // MARK: - Close Button
+    private var closeButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(Theme.Font.captionBold)
+                .foregroundColor(.white.opacity(0.9))
                 .frame(width: 36, height: 36)
-                .overlay(
-                    Image("AppLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 22, height: 22)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(
+                    Circle()
+                        .fill(.white.opacity(0.15))
+                        .overlay(
+                            Circle()
+                                .strokeBorder(.white.opacity(0.25), lineWidth: 1)
+                        )
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(brandGradient, lineWidth: 1)
-                )
-                .shadow(color: Theme.Color.accent.opacity(0.22), radius: 6, y: 3)
+        }
+        .buttonStyle(.plain)
+    }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("WorthIt verdict")
+    // MARK: - 2. Hero Section (Compact)
+    private var heroSection: some View {
+        VStack(spacing: 0) { // Tighter control
+            // Verdict Badge - Centered, proper spacing
+            HStack(spacing: 6) {
+                Text("VERDICT:")
                     .font(Theme.Font.captionBold)
-                    .foregroundStyle(brandGradient)
-                verdictBadge
+                    .foregroundStyle(verdictColor.opacity(0.9))
+                
+                HStack(spacing: 4) {
+                    Image(systemName: verdictIcon)
+                        .font(Theme.Font.caption2.weight(.black))
+                    Text(verdictLabel.uppercased())
+                        .font(Theme.Font.captionBold)
+                        .tracking(0.8)
+                }
+                .foregroundStyle(verdictColor)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(verdictColor.opacity(0.08))
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(verdictColor.opacity(0.18), lineWidth: 1)
+                    )
+            )
+            .shadow(color: verdictColor.opacity(0.15), radius: 4, x: 0, y: 2)
+            .frame(maxWidth: .infinity) // Center the badge horizontally
+            .padding(.top, 0) // No extra padding (hero section handles it)
+            .padding(.bottom, 16) // Uniform spacing: verdict-to-gauge = 16pt
+            
+            // Centered Score Gauge (smaller)
+            ZStack {
+                // Subtle glow behind gauge
+                Circle()
+                    .fill(verdictColor)
+                    .frame(width: 46, height: 46)
+                    .blur(radius: 28)
+                    .opacity(0.22)
+                
+                ScoreGaugeView(
+                    score: model.score ?? 0,
+                    isLoading: false,
+                    showBreakdown: $showGaugeBreakdown,
+                    isAnimationCompleted: $gaugeAnimationCompleted
+                )
+                .frame(width: 72, height: 72) // Slightly smaller (was 80)
+                .onTapGesture {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    viewModel.requestScoreBreakdownPresentation()
+                    onClose() // Close card when opening breakdown
+                }
+            }
+            .padding(.bottom, 16) // Spacing to hero text
+
+            // Hero Reason - Stable, properly aligned formatting
+            Text(model.reason)
+                .font(Theme.Font.title3.weight(.bold))
+                .foregroundColor(.white.opacity(0.95))
+                .multilineTextAlignment(.leading) // Left-aligned for consistent line starts
+                .lineSpacing(5) // Consistent line spacing
+                .kerning(0.1) // Fixed letter spacing - no shifting
+                .lineLimit(6) // Allow more lines instead of scaling
+                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1.5)
+                .frame(maxWidth: .infinity, alignment: .leading) // Ensure left alignment
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private var snapshotSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Snapshot: What is the prompt that defines it?")
+    // MARK: - 3. Learnings (Always fits)
+    private var learningsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Subtitle
+            Text("You'll learn:")
+                .font(Theme.Font.subheadline.weight(.semibold))
+                .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
+                .padding(.bottom, 2)
+            
+            // Learning items (without "You'll learn" prefix)
+            ForEach(model.learnings.prefix(2), id: \.self) { item in
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "bolt.fill")
+                        .font(Theme.Font.captionBold)
+                        .foregroundStyle(Theme.Gradient.appBluePurple)
+                        .padding(.top, 2)
+                        .shadow(color: Theme.Color.brandBlue.opacity(0.4), radius: 3)
 
-            Text(model.reason)
-                .font(Theme.Font.body)
-                .foregroundColor(Theme.Color.primaryText)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let skip = model.skipNote, !skip.isEmpty {
-                Text(skip)
-                    .font(Theme.Font.subheadline)
-                    .foregroundColor(Theme.Color.warning)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(capitalizeFirst(item))
+                        .font(Theme.Font.subheadline)
+                        .foregroundColor(Theme.Color.secondaryText)
+                        .lineLimit(nil) // Allow full text
+                        .fixedSize(horizontal: false, vertical: true) // Expand to fit
+                        .minimumScaleFactor(0.9) // Slight scale if needed
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var learningsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if !model.learnings.isEmpty {
-                sectionHeader("What you'll learn")
-            }
-
-            ForEach(model.learnings.prefix(3), id: \.self) { item in
-                HStack(alignment: .top, spacing: 10) {
+    // MARK: - 4. Footer Actions
+    private var footerButtons: some View {
+        HStack(spacing: 12) {
+            // Primary: View Details (Prominent, filled gradient)
+            Button(action: onPrimaryAction) {
+                HStack(spacing: 6) {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(brandGradient)
-                        .padding(.top, 1)
-
-                    Text(item)
-                        .font(Theme.Font.subheadline)
-                        .foregroundColor(Theme.Color.secondaryText.opacity(0.94))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .font(Theme.Font.subheadlineBold)
+                    Text("View Details")
+                        .font(Theme.Font.subheadlineBold)
                 }
             }
-        }
-    }
+            .buttonStyle(GlassButtonStyle(kind: .primary, tint: Theme.Gradient.appBluePurple))
 
-    private var dataGrid: some View {
-        VStack(spacing: 0) {
-            gridRow(icon: model.depthChip.iconName, title: model.depthChip.title, value: model.depthChip.detail)
-            Divider().background(Color.white.opacity(0.08)).padding(.leading, 46)
-            gridRow(icon: model.commentsChip.iconName, title: model.commentsChip.title, value: model.commentsChip.detail)
-
-            if let bestText = bestMomentText {
-                Divider().background(Color.white.opacity(0.08)).padding(.leading, 46)
-                gridRow(icon: "forward.end.alt.fill", title: "Best moment", value: bestText)
+            // Secondary: Ask Question (Outlined style for clear hierarchy)
+            Button(action: onSecondaryAction) {
+                HStack(spacing: 6) {
+                    Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                        .font(Theme.Font.subheadlineBold)
+                    Text("Ask Question")
+                        .font(Theme.Font.subheadlineBold)
+                }
             }
-        }
-        .background(Theme.Color.sectionBackground.opacity(0.55))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(brandGradient.opacity(0.35), lineWidth: 0.8)
-                .blendMode(.overlay)
-        )
-    }
-
-    private func gridRow(icon: String, title: String, value: String) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(Theme.Color.secondaryText)
-                .frame(width: 24)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title.uppercased())
-                    .font(Theme.Font.captionBold)
-                    .foregroundColor(Theme.Color.primaryText.opacity(0.78))
-                Text(value)
-                    .font(Theme.Font.subheadline)
-                    .foregroundColor(Theme.Color.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-    }
-
-    private var footerButtons: some View {
-        VStack(spacing: 12) {
-            primaryButton
-            secondaryButton
+            .buttonStyle(GlassButtonStyle(kind: .secondary, tint: Theme.Gradient.appBluePurple))
         }
     }
 
-    // MARK: - Elements
-
-    private var gaugeView: some View {
-        ScoreGaugeView(
-            score: model.score ?? 0,
-            isLoading: false,
-            showBreakdown: $showGaugeBreakdown,
-            isAnimationCompleted: $gaugeAnimationCompleted
-        )
-        .frame(width: 64, height: 64)
+    private func capitalizeFirst(_ str: String) -> String {
+        return str.prefix(1).capitalized + str.dropFirst()
     }
 
-    private var verdictBadge: some View {
-        let (label, tone): (String, Color) = {
-            let resolvedScore = model.score ?? 0
-            switch model.verdict {
-            case .worthIt: return (verdictLabel, Theme.Color.success)
-            case .skip: return (verdictLabel, Theme.Color.error)
-            case .maybe: return (verdictLabel, resolvedScore >= 50 ? Theme.Color.warning : Theme.Color.secondaryText)
-            @unknown default: return ("Verdict", Theme.Color.secondaryText)
-            }
-        }()
-
-        return Text(label)
-            .font(Theme.Font.captionBold)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(tone.opacity(0.12))
-            )
-            .foregroundColor(tone)
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(tone.opacity(0.35), lineWidth: 0.9)
-            )
-    }
-
+    // MARK: - Helpers
     private var verdictLabel: String {
         switch model.verdict {
-        case .worthIt: return "Worth it"
-        case .skip: return "Skip it"
+        case .worthIt: return "Worth It"
+        case .skip: return "Skip It"
         case .maybe: return "Borderline"
         @unknown default: return "Verdict"
         }
     }
 
-    private var primaryButton: some View {
-        Button(action: onPrimaryAction) {
-            HStack {
-                Image(systemName: "sparkles")
-                Text("Open Essentials")
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-            }
-            .font(Theme.Font.headlineBold)
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(
-                LinearGradient(
-                    gradient: Gradient(colors: [Theme.Color.brandCyan, Theme.Color.brandPurple]),
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.white.opacity(0.26), lineWidth: 0.9)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(brandGradient.opacity(0.5), lineWidth: 0.8)
-                    .blur(radius: 2)
-            )
-            .shadow(color: Theme.Color.accent.opacity(0.45), radius: 14, y: 8)
+    private var verdictIcon: String {
+        switch model.verdict {
+        case .worthIt: return "checkmark.seal.fill"
+        case .skip: return "hand.thumbsdown.fill"
+        case .maybe: return "exclamationmark.triangle.fill"
+        @unknown default: return "circle"
         }
-        .buttonStyle(ScaleButtonStyle())
-    }
-
-    private var secondaryButton: some View {
-        Button(action: onSecondaryAction) {
-            HStack {
-                Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                Text(model.topQuestion.map { "Ask: \($0)" } ?? "Ask WorthIt AI")
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-            }
-            .font(Theme.Font.subheadlineBold)
-            .foregroundStyle(brandGradient)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Theme.Color.sectionBackground.opacity(0.35))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(brandGradient, lineWidth: 1)
-            )
-        }
-        .buttonStyle(ScaleButtonStyle())
-    }
-
-    private var closeButton: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(Theme.Color.secondaryText)
-                .padding(10)
-                .background(
-                    Circle()
-                        .fill(Theme.Color.sectionBackground.opacity(0.7))
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-                        )
-                )
-        }
-        .padding(16)
-    }
-
-    // MARK: - Helpers
-
-    private func sectionHeader(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            Rectangle()
-                .fill(brandGradient)
-                .frame(width: 18, height: 3)
-                .cornerRadius(2)
-            Text(text.uppercased())
-                .font(Theme.Font.captionBold)
-                .foregroundColor(Theme.Color.secondaryText)
-        }
-    }
-
-    private func thumbnail(size: CGSize) -> some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Theme.Color.sectionBackground.opacity(0.7))
-            .frame(width: size.width, height: size.height)
-            .overlay(
-                AsyncImage(url: model.thumbnailURL) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView()
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        Image(systemName: "play.rectangle.fill")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 26, height: 26)
-                            .foregroundColor(Theme.Color.secondaryText)
-                    @unknown default:
-                        EmptyView()
-                    }
-                }
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-            )
-            .shadow(color: .black.opacity(0.2), radius: 6, y: 4)
-    }
-
-    private var bestMomentText: String? {
-        if let seconds = model.bestStartSeconds, seconds > 0 {
-            return "Highlights start near \(formattedBestStart)"
-        }
-        let detail = cleanedDetail(model.jumpChip.detail)
-        return detail.isEmpty ? nil : detail
-    }
-
-    private func cleanedDetail(_ text: String) -> String {
-        if let range = text.range(of: "http") {
-            let trimmed = text[..<range.lowerBound]
-            return trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var formattedBestStart: String {
-        guard let seconds = model.bestStartSeconds else { return "" }
-        let minutes = seconds / 60
-        let remainder = seconds % 60
-        return String(format: "%02d:%02d", minutes, remainder)
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .fill(Theme.Color.sectionBackground.opacity(0.95))
-            .background(
-                Theme.Gradient.brandSheen()
-                    .opacity(0.18)
-                    .blur(radius: 50)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 0.9)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(brandGradient.opacity(0.4), lineWidth: 0.9)
-                    .blendMode(.overlay)
-            )
     }
 }
 
-// Animation Helper
-struct ScaleButtonStyle: ButtonStyle {
+// MARK: - Glass Button Style
+struct GlassButtonStyle: ButtonStyle {
+    enum Kind {
+        case primary
+        case secondary
+    }
+    
+    var kind: Kind
+    var tint: LinearGradient
+    
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .foregroundStyle(kind == .primary ? Color.white : Theme.Color.primaryText.opacity(0.95))
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity)
+            .frame(height: 40)
+            .background(buttonBackground(configuration: configuration))
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+    
+    @ViewBuilder
+    private func buttonBackground(configuration: Configuration) -> some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(alignment: .center) {
+                if kind == .primary {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(tint)
+                        .opacity(0.65)
+                        .blendMode(.screen)
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.2),
+                                Color.white.opacity(0.02)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .opacity(kind == .primary ? 0.8 : 0.35)
+                    .blendMode(.screen)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.white.opacity(kind == .primary ? 0.4 : 0.25), lineWidth: 1)
+                    .blendMode(.screen)
+            )
+            .shadow(color: shadowColor(configuration: configuration), radius: configuration.isPressed ? 2 : 8, y: 4)
+    }
+    
+    private func shadowColor(configuration: Configuration) -> Color {
+        guard !configuration.isPressed else { return .clear }
+        return kind == .primary ? Theme.Color.brandPurple.opacity(0.35) : Theme.Color.brandBlue.opacity(0.2)
     }
 }

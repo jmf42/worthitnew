@@ -224,7 +224,7 @@ struct InitialScreen: View {
                     }) {
                         Image(systemName: "plus.circle.fill")
                             .font(.system(size: 20))
-                            .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                            .foregroundColor(Theme.Color.secondaryText.opacity(0.85)) // match share button colors
                             .frame(width: 36, height: 36)
                             .contentShape(Circle())
                     }
@@ -848,7 +848,7 @@ struct AboutView: View {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
         let join = build.isEmpty ? version : "\(version) (\(build))"
-        return "WorthIt.AI v\(join)"
+        return "WorthIt v\(join)"
     }
 
     var body: some View {
@@ -881,7 +881,7 @@ struct AboutView: View {
                                 .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
 
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("WorthIt.AI")
+                                Text("WorthIt")
                                     .font(Theme.Font.title2.weight(.bold))
                                     .foregroundStyle(Theme.Gradient.appLogoText())
                                 Text("AI‑Powered YouTube Video Analysis")
@@ -923,7 +923,7 @@ struct AboutView: View {
                         Text("How it works")
                             .font(Theme.Font.headline.weight(.semibold))
                             .foregroundColor(Theme.Color.primaryText)
-                        Text("WorthIt.AI uses publicly available YouTube transcripts and comments to provide AI‑powered analysis. We send that public content to our AI provider to generate structured insights, summaries, and interactive Q&A. We do not require an account or collect personal information.")
+                        Text("WorthIt uses publicly available YouTube transcripts and comments to provide AI‑powered analysis. We send that public content to our AI provider to generate structured insights, summaries, and interactive Q&A. We do not require an account or collect personal information.")
                             .font(Theme.Font.body)
                             .foregroundColor(Theme.Color.secondaryText)
                             .lineSpacing(4)
@@ -958,7 +958,7 @@ struct AboutView: View {
                         HStack(spacing: 10) {
                             SmallLinkButton(
                                 title: "Report an Issue",
-                                url: URL(string: "mailto:worthit.tuliai@gmail.com?subject=WorthIt.AI%20Support&body=Please%20describe%20the%20issue.%20If%20possible%2C%20include%20the%20YouTube%20URL.%0A")!
+                                url: URL(string: "mailto:worthit.tuliai@gmail.com?subject=WorthIt%20Support&body=Please%20describe%20the%20issue.%20If%20possible%2C%20include%20the%20YouTube%20URL.%0A")!
                             )
                         }
                     }
@@ -983,7 +983,7 @@ struct AboutView: View {
                         Text("Version")
                             .font(Theme.Font.headline.weight(.semibold))
                             .foregroundColor(Theme.Color.primaryText)
-                        Text("WorthIt.AI v1.01")
+                        Text("WorthIt v1.01")
                             .font(Theme.Font.body)
                             .foregroundColor(Theme.Color.secondaryText)
                     }

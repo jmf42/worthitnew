@@ -38,6 +38,10 @@ class MainViewModel: ObservableObject {
     /// Tracks if the current video already displayed its decision card this session
     @Published private(set) var hasShownDecisionCardForCurrentVideo: Bool = false
 
+    // MARK: - Chapters
+    @Published var chapters: [VideoChapter] = []
+    @Published var isChaptersLoading: Bool = false
+
     @Published var qaMessages: [ChatMessage] = []
     @Published var qaInputText: String = ""
     @Published var isQaLoading: Bool = false
@@ -73,7 +77,7 @@ class MainViewModel: ObservableObject {
     private var processedVideoIDsThisSession = Set<String>()
 
     private let commentClassificationLimit = 50
-    private let commentInsightsLimit = 25
+    private let commentInsightsLimit = 50
     private var decisionCardShownVideoIDs = Set<String>()
 
     // MARK: - Score breakdown presentation
@@ -183,6 +187,18 @@ class MainViewModel: ObservableObject {
             if seen.insert(key).inserted {
                 result.append(trimmed)
             }
+        }
+        return result
+    }
+
+    /// Evenly samples up to `limit` comments across the list to capture early, middle, and late signals.
+    private func sampleComments(_ comments: [String], limit: Int) -> [String] {
+        guard comments.count > limit, limit > 0 else { return Array(comments.prefix(limit)) }
+        let step = Double(comments.count - 1) / Double(limit - 1)
+        var result: [String] = []
+        for i in 0..<limit {
+            let idx = Int(round(Double(i) * step))
+            result.append(comments[idx])
         }
         return result
     }
@@ -578,7 +594,7 @@ class MainViewModel: ObservableObject {
         updateProgress(0.6, message: "Analyzing")
 
         let classificationComments = Array(comments.prefix(commentClassificationLimit))
-        let insightsComments = Array(comments.prefix(commentInsightsLimit))
+        let insightsComments = sampleComments(comments, limit: commentInsightsLimit)
         let cache = cacheManager
         let precleanedTranscript = self.cleanedTranscriptForLLM
         let insightsContextSource = precleanedTranscript ?? transcript
@@ -781,8 +797,53 @@ class MainViewModel: ObservableObject {
         hasShownDecisionCardForCurrentVideo = true
     }
 
+    // MARK: - Chapters
+    func loadChapters() async {
+        guard let videoId = currentVideoID else {
+            Logger.shared.warning("Cannot load chapters: no current video ID", category: .ui)
+            return
+        }
+
+        isChaptersLoading = true
+        defer { isChaptersLoading = false }
+
+        do {
+            Logger.shared.info("Loading chapters for video: \(videoId)", category: .ui)
+            let response = try await apiManager.fetchTranscriptWithSnippets(videoId: videoId)
+
+            if let snippets = response.snippets {
+                chapters = VideoChapter.createChapters(from: snippets)
+                Logger.shared.info("Loaded \(chapters.count) chapters for video: \(videoId)", category: .ui)
+            } else {
+                chapters = []
+                Logger.shared.info("No chapters available for video: \(videoId)", category: .ui)
+            }
+        } catch {
+            Logger.shared.error("Failed to load chapters for video: \(videoId)", category: .ui, error: error)
+            chapters = []
+            showFriendlyError(for: error, videoId: videoId)
+        }
+    }
+
+    func jumpToChapter(at time: Double) {
+        guard let videoId = currentVideoID else { return }
+
+        Logger.shared.info("Jumping to chapter at \(time)s for video: \(videoId)", category: .ui)
+
+        // Open YouTube at specific timestamp
+        let youtubeURL = URL(string: "https://youtube.com/watch?v=\(videoId)&t=\(Int(time))s")!
+        UIApplication.shared.open(youtubeURL)
+    }
+
     private func calculateAndSetWorthItScore() {
-        let depthNormalized = essentialsCommentAnalysis?.contentDepthScore ?? 0.6 // rough transcript-only heuristic
+        let transcriptText = transcriptForAnalysis ?? rawTranscript ?? ""
+        let lowTranscriptQuality = transcriptText.count < 600
+        let depthBase = lowTranscriptQuality ? 0.3 : 0.5
+        let depthRaw = essentialsCommentAnalysis?.contentDepthScore
+        let depthNormalized = max(0.0, min(depthRaw ?? depthBase, 1.0))
+        let sentimentRaw = essentialsCommentAnalysis?.overallCommentSentimentScore
+        let initialCommentSentiment = max(0.0, min(sentimentRaw ?? 0.0, 1.0))
+
         let takeaways = analysisResult?.takeaways ?? []
         let gems = analysisResult?.gemsOfWisdom ?? []
         var contentHighlights = uniqueNonEmpty(takeaways + gems)
@@ -807,33 +868,55 @@ class MainViewModel: ObservableObject {
             if !categorized.isEmpty { return categorized.count }
             return analysisResult?.topThemes?.count
         }()
+        let hasDepthSignal = depthRaw != nil || analysisResult != nil
+        let hasCommentSignal = sentimentRaw != nil || !(llmAnalyzedComments.isEmpty) || !categorized.isEmpty
+        guard hasDepthSignal || hasCommentSignal else {
+            worthItScore = nil
+            scoreBreakdownDetails = nil
+            return
+        }
+
+        let commentCount = commentsAnalyzedCount ?? 0
+        let spamPenaltyFactor: Double = {
+            guard let ratio = spamRatio, ratio > 0.25 else { return 1.0 }
+            return 0.7
+        }()
+        var commentWeight = 0.35
+        if commentCount == 0 {
+            commentWeight = 0.0
+        } else if commentCount < 8 {
+            commentWeight *= 0.5
+        } else if commentCount > 20 && spamPenaltyFactor >= 0.99 {
+            commentWeight = 0.45
+        }
+        let depthWeight = max(0.3, 1.0 - commentWeight)
+        let commentSentimentNormalized = initialCommentSentiment * spamPenaltyFactor
+
+        var blendedScore = (depthNormalized * depthWeight) + (commentSentimentNormalized * commentWeight)
+
+        if depthNormalized < 0.25 {
+            blendedScore = min(blendedScore, 0.55)
+        }
+        if commentSentimentNormalized < 0.30 && commentCount > 0 {
+            blendedScore = min(blendedScore, 0.50)
+        }
+        if depthNormalized > 0.8 && commentSentimentNormalized > 0.8 && commentCount > 15 && spamPenaltyFactor >= 0.99 {
+            blendedScore = min(blendedScore + 0.10, 0.95)
+        }
+
+        let finalScoreValue = max(0.0, min(blendedScore, 1.0))
+        let finalScorePercent = (finalScoreValue * 1000).rounded() / 10.0 // keep one decimal internally
+        self.worthItScore = finalScorePercent
 
         if let commentData = essentialsCommentAnalysis {
-            // Normal calculation (with comments)
-            let depthWeight = 0.60
-            let commentSentimentWeight = 0.40
-            // overallCommentSentimentScore is specified as [0,1] in the prompt
-            let commentSentimentRaw = commentData.overallCommentSentimentScore ?? 0.0
-            let commentSentimentNormalized = max(0.0, min(commentSentimentRaw, 1.0))
-
-            var finalScoreValue = (depthNormalized * depthWeight) +
-                             (commentSentimentNormalized * commentSentimentWeight)
-
-            if depthNormalized > 0.8 && commentSentimentNormalized > 0.7 { finalScoreValue += 0.05 }
-            if depthNormalized < 0.3 { finalScoreValue -= 0.05 }
-
-            finalScoreValue = max(0.0, min(finalScoreValue, 1.0))
-            let roundedScore = round(finalScoreValue * 100)
-
-            self.worthItScore = roundedScore
-            if let reasons = commentData.decisionReasons {
-                commentHighlights.append(contentsOf: reasons)
+            if !commentData.decisionReasons.isEmpty {
+                commentHighlights.append(contentsOf: commentData.decisionReasons)
             }
             if let tips = commentData.viewerTips {
                 commentHighlights.append(contentsOf: tips)
             }
-            if let learnings = commentData.decisionLearnings {
-                contentHighlights.append(contentsOf: learnings)
+            if !commentData.decisionLearnings.isEmpty {
+                contentHighlights.append(contentsOf: commentData.decisionLearnings)
             }
             if let bestMoment = commentData.decisionBestMoment, !bestMoment.isEmpty {
                 contentHighlights.append("Best moment: \(bestMoment)")
@@ -845,56 +928,38 @@ class MainViewModel: ObservableObject {
             if let signalQuality = commentData.signalQualityNote, !signalQuality.isEmpty {
                 commentWatchouts.append(signalQuality)
             }
-            contentHighlights = uniqueNonEmpty(contentHighlights)
-            contentWatchouts = uniqueNonEmpty(contentWatchouts)
-            commentHighlights = uniqueNonEmpty(commentHighlights)
-            commentWatchouts = uniqueNonEmpty(commentWatchouts)
-
-            self.scoreBreakdownDetails = ScoreBreakdown(
-                contentDepthScore: depthNormalized,
-                commentSentimentScore: commentSentimentNormalized,
-                hasComments: true, // Comments exist in this path
-                contentDepthRaw: depthNormalized,
-                commentSentimentRaw: commentSentimentRaw,
-                finalScore: roundedScore,
-                videoTitle: analysisResult?.videoTitle ?? currentVideoTitle ?? "Video",
-                positiveCommentThemes: positiveThemes,
-                negativeCommentThemes: negativeThemes,
-                contentHighlights: contentHighlights,
-                contentWatchouts: contentWatchouts,
-                commentHighlights: commentHighlights,
-                commentWatchouts: commentWatchouts,
-                spamRatio: spamRatio,
-                commentsAnalyzed: commentsAnalyzedCount
-            )
-        } else {
-            // PATCH: No comments, score is 100% content depth
-            let roundedScore = round(depthNormalized * 100)
-            self.worthItScore = roundedScore
-            contentHighlights = uniqueNonEmpty(contentHighlights)
-            self.scoreBreakdownDetails = ScoreBreakdown(
-                contentDepthScore: depthNormalized,
-                commentSentimentScore: 0.0,
-                hasComments: !(self.llmAnalyzedComments.isEmpty), // Use truncated array for hasComments
-                contentDepthRaw: depthNormalized,
-                commentSentimentRaw: 0.0,
-                finalScore: roundedScore,
-                videoTitle: analysisResult?.videoTitle ?? currentVideoTitle ?? "Video",
-                positiveCommentThemes: positiveThemes,
-                negativeCommentThemes: negativeThemes,
-                contentHighlights: contentHighlights,
-                contentWatchouts: contentWatchouts,
-                commentHighlights: commentHighlights,
-                commentWatchouts: commentWatchouts,
-                spamRatio: spamRatio,
-                commentsAnalyzed: commentsAnalyzedCount
-            )
         }
 
-        Logger.shared.info("Worth-It Score calculated: \(self.worthItScore ?? -1). Depth: \(depthNormalized), Comment Sentiment: \(essentialsCommentAnalysis?.overallCommentSentimentScore ?? 0)", category: .services)
+        contentHighlights = uniqueNonEmpty(contentHighlights)
+        contentWatchouts = uniqueNonEmpty(contentWatchouts)
+        commentHighlights = uniqueNonEmpty(commentHighlights)
+        commentWatchouts = uniqueNonEmpty(commentWatchouts)
 
+        self.scoreBreakdownDetails = ScoreBreakdown(
+            contentDepthScore: depthNormalized,
+            commentSentimentScore: commentSentimentNormalized,
+            hasComments: commentCount > 0,
+            contentDepthRaw: depthNormalized,
+            commentSentimentRaw: sentimentRaw ?? 0.0,
+            finalScore: finalScorePercent,
+            videoTitle: analysisResult?.videoTitle ?? currentVideoTitle ?? "Video",
+            positiveCommentThemes: positiveThemes,
+            negativeCommentThemes: negativeThemes,
+            contentHighlights: contentHighlights,
+            contentWatchouts: contentWatchouts,
+            commentHighlights: commentHighlights,
+            commentWatchouts: commentWatchouts,
+            spamRatio: spamRatio,
+            commentsAnalyzed: commentsAnalyzedCount
+        )
+
+        Logger.shared.info("Worth-It Score calculated: \(self.worthItScore ?? -1). Depth: \(depthNormalized), Comment Sentiment: \(sentimentRaw ?? 0)", category: .services)
+
+        // Trigger Decision Card after gauge animation completes (1.5s animation + small buffer)
         if let videoId = currentVideoID {
-            refreshDecisionCardIfPossible(videoId: videoId)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) { // Wait for gauge to fully animate
+                self.refreshDecisionCardIfPossible(videoId: videoId)
+            }
         }
     }
 
@@ -907,7 +972,6 @@ class MainViewModel: ObservableObject {
         let decision = essentialsCommentAnalysis
         let analysis = analysisResult
         let verdict = decisionVerdict(from: decision?.decisionVerdict) ?? verdictForScore(resolvedScore)
-        let confidence = decisionConfidenceLevel(from: decision?.decisionConfidence) ?? confidenceForData()
 
         let depthDetail: String = {
             if let reason = decision?.decisionReasons.first, !reason.isEmpty {
@@ -952,7 +1016,8 @@ class MainViewModel: ObservableObject {
             detail: jumpDetail
         )
 
-        let reasonText = truncateForCard(decision?.decisionReasons.first ?? analysis?.takeaways?.first ?? "Your Worth-It verdict is ready.", max: 140)
+        // Use the enhanced reason directly - it's already optimized for the UI (≤140 chars)
+        let reasonText = decision?.decisionReasons.first ?? analysis?.takeaways?.first ?? "Your Worth-It verdict is ready."
         let model = DecisionCardModel(
             title: analysis?.videoTitle ?? currentVideoTitle ?? "Video",
             reason: reasonText,
@@ -961,8 +1026,7 @@ class MainViewModel: ObservableObject {
             commentsChip: commentsChip,
             jumpChip: jumpChip,
             verdict: verdict,
-            confidence: confidence,
-            timeValue: nil,
+            timeValue: formattedTimeValue(seconds: analysis?.videoDurationSeconds),
             thumbnailURL: currentVideoThumbnailURL,
             bestStartSeconds: bestStart,
             learnings: (decision?.decisionLearnings ?? analysis?.takeaways ?? []).prefix(2).map { $0 },
@@ -988,16 +1052,6 @@ class MainViewModel: ObservableObject {
         return nil
     }
 
-    private func confidenceForData() -> DecisionConfidence {
-        if !llmAnalyzedComments.isEmpty, analysisResult != nil {
-            return DecisionConfidence(level: .high)
-        }
-        if analysisResult != nil {
-            return DecisionConfidence(level: .medium)
-        }
-        return DecisionConfidence(level: .low)
-    }
-
     private func parseBestMomentSeconds(from text: String?) -> Int? {
         guard let t = text else { return nil }
         // Expect formats like "mm:ss — ..." or "m:ss"
@@ -1010,11 +1064,15 @@ class MainViewModel: ObservableObject {
         return minutes * 60 + seconds
     }
 
-    private func decisionConfidenceLevel(from value: Double?) -> DecisionConfidence? {
-        guard let v = value else { return nil }
-        if v >= 0.7 { return DecisionConfidence(level: .high) }
-        if v >= 0.45 { return DecisionConfidence(level: .medium) }
-        return DecisionConfidence(level: .low)
+    private func formattedTimeValue(seconds: Int?) -> String? {
+        guard let total = seconds, total > 0 else { return nil }
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        if hours > 0 {
+            return "\(hours)h \(minutes)m watch"
+        }
+        let roundedMinutes = max(1, Int((Double(total) / 60.0).rounded()))
+        return "\(roundedMinutes)m watch"
     }
 
     private func truncateForCard(_ text: String, max: Int) -> String {

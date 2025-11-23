@@ -41,7 +41,7 @@ struct PaywallView_Previews: PreviewProvider {
         usageSnapshot: UsageTracker.Snapshot(
             date: Date(),
             count: 3,
-            limit: 5,
+            limit: 3,
             remaining: 2,
             videoIds: ["abc123", "def456", "ghi789"]
         )

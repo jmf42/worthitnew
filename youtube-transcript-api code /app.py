@@ -181,8 +181,9 @@ def make_transcript_payload(
     language_label: str,
     is_generated: bool,
     tracks: Optional[List[Dict[str, Any]]] = None,
+    snippets: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "text": text,
         "language": {
             "code": language_code or "unknown",
@@ -191,6 +192,9 @@ def make_transcript_payload(
         },
         "tracks": tracks or [],
     }
+    if snippets:
+        payload["snippets"] = snippets
+    return payload
 
 def make_fallback_payload(
     text: str,
@@ -1050,6 +1054,26 @@ def fetch_api_once(video_id: str,
     if not text_content:
         return None
 
+    # Process snippets with timestamps for chapters functionality
+    snippets_with_timestamps = None
+    if segments and isinstance(segments, list):
+        try:
+            snippets_with_timestamps = [
+                {
+                    "text": seg.get("text", ""),
+                    "start": seg.get("start", 0.0),
+                    "duration": seg.get("duration", 0.0)
+                }
+                for seg in segments
+                if isinstance(seg, dict) and "text" in seg and "start" in seg
+            ]
+            # Only include snippets if we have valid data
+            if not snippets_with_timestamps:
+                snippets_with_timestamps = None
+        except Exception:
+            # If anything goes wrong, just skip snippets - don't break the transcript
+            snippets_with_timestamps = None
+
     language_code = getattr(ft, "language_code", None)
     language_label = getattr(ft, "language", language_code)
     is_generated = getattr(ft, "is_generated", getattr(selected_transcript, "is_generated", False))
@@ -1063,6 +1087,7 @@ def fetch_api_once(video_id: str,
         language_label or language_code or "unknown",
         bool(is_generated),
         track_manifest,
+        snippets_with_timestamps,
     )
 
     log_event('info', 'transcript_method_success', extra={

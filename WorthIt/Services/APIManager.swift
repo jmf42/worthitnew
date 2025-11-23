@@ -190,6 +190,53 @@ class APIManager: GPTServiceProtocol {
         }
     }
 
+    func fetchTranscriptWithSnippets(videoId: String) async throws -> BackendTranscriptWithSnippetsResponse {
+        let deviceLang: String = {
+            guard let id = Locale.preferredLanguages.first, !id.isEmpty else { return "en" }
+            if #available(iOS 16.0, *) {
+                let lang = Locale.Language(identifier: id)
+                if let code = lang.languageCode?.identifier { return code }
+            } else if let primary = id.split(separator: "-").first, !primary.isEmpty {
+                return String(primary)
+            }
+            let simple = id.prefix(2)
+            return simple.isEmpty ? "en" : String(simple)
+        }()
+
+        let base = ["en", "es", "pt", "hi", "ar"]
+        var ordered: [String] = []
+        func appendUnique(_ code: String) { if !ordered.contains(code) { ordered.append(code) } }
+        appendUnique(deviceLang)
+        for code in base { appendUnique(code) }
+        ordered = Array(ordered.prefix(5))
+
+        let primaryLanguage = ordered.first ?? "en"
+        let fallbackLanguages = ordered.joined(separator: ",")
+
+        Logger.shared.info("Transcript with snippets request starting for \(videoId) with primary language=\(primaryLanguage)", category: .networking)
+
+        do {
+            let response: BackendTranscriptWithSnippetsResponse = try await performRequest(
+                endpoint: "transcript",
+                queryParams: ["videoId": videoId, "languages": primaryLanguage],
+                timeout: 25
+            )
+            if let text = response.text, !text.isEmpty {
+                Logger.shared.info("Transcript with snippets fetched successfully for \(videoId)", category: .networking)
+                return response
+            }
+            throw NetworkError.decodingFailed
+        } catch let NetworkError.unknownStatus(code) where code == 404 {
+            Logger.shared.notice("Transcript 404 for \(videoId) with primary language. Retrying with fallbacks...", category: .networking)
+            if let response = try? await performRequest(endpoint: "transcript", queryParams: ["videoId": videoId]) as BackendTranscriptWithSnippetsResponse,
+               let text = response.text, !text.isEmpty {
+                Logger.shared.info("Transcript fallback succeeded without languages for \(videoId)", category: .networking)
+                return response
+            }
+            throw NetworkError.unknownStatus(404)
+        }
+    }
+
     private func performTranscriptFetch(videoId: String) async throws -> String {
         struct BackendTranscriptResponse: Decodable { let text: String? }
 
@@ -619,7 +666,15 @@ Transcript:
         let selectedModel: String = transcript.count > 15000 ? "gpt-5-nano-2025-08-07" : openAIModelName
         let requestPayload = OpenAIProxyRequest<String>(model: selectedModel, max_output_tokens: 1200, promptInput: prompt)
         let result: TranscriptOnlyResponse = try await performOpenAIRequest(payload: requestPayload)
-        return result
+        
+        // Limit longSummary to 2500 characters
+        let limitedSummary = result.longSummary.count > 2500 ? String(result.longSummary.prefix(2500)) : result.longSummary
+        
+        return TranscriptOnlyResponse(
+            longSummary: limitedSummary,
+            takeaways: result.takeaways,
+            gemsOfWisdom: result.gemsOfWisdom
+        )
     }
 
     func fetchCommentsClassification(comments: [String]) async throws -> CommentsOnlyResponse {
@@ -631,7 +686,7 @@ Transcript:
             .joined(separator: "\n")
 
         let prompt = """
-You are WorthIt.AI. Return EXACTLY ONE valid JSON object with comments-only fields:
+You are WorthIt. Return EXACTLY ONE valid JSON object with comments-only fields:
 {"CommentssentimentSummary": string, "topThemes": [{"theme": string, "sentiment": "Positive|Negative|Mixed|Neutral", "sentimentScore": number, "exampleComment": string}], "categorizedComments": [{"index": number, "category": "humor|insightful|controversial|spam|neutral"}]}
 
 Rules:
@@ -666,7 +721,20 @@ comments_count: \(count)
             return pref
         }()
         let prompt = """
-You are WorthIt.AI Comment+Transcript Rater.
+You are WorthIt Comment+Transcript Rater. Your output powers a "10-second decision card" that helps users instantly decide if a video is worth watching.
+
+CONTEXT: Your output is used in MULTIPLE places:
+1. Decision Card UI (primary focus):
+   - Verdict badge (Worth It / Skip / Borderline) from decisionVerdict
+   - Score gauge (0-100%) calculated from your depth + sentiment scores
+   - Hero reason (the "why" - MAIN focal point, shown in large bold text) from decisionReasons[0]
+   - 1-2 learnings (shown with bolt icons) from decisionLearnings
+   - First suggested question (shown on secondary button) from suggestedQuestions[0]
+2. Ask Anything Screen:
+   - All 3 suggested questions shown as horizontal scrollable buttons
+3. Score Gauge & Breakdown:
+   - contentDepthScore and overallCommentSentimentScore used to calculate final score
+   - Scores displayed in progress bars and breakdown details
 
 TASK
 Return exactly ONE JSON object with these keys and nothing else (no extra keys):
@@ -675,7 +743,6 @@ Return exactly ONE JSON object with these keys and nothing else (no extra keys):
   "contentDepthScore": float|null,
   "suggestedQuestions": [string, string, string]|null,
   "decisionVerdict": string|null,
-  "decisionConfidence": float|null,
   "decisionReasons": [string],
   "decisionLearnings": [string],
   "decisionBestMoment": string|null,
@@ -688,54 +755,114 @@ STRICT OUTPUT RULES
 - Floats must be in [0,1], rounded to 2 decimals (e.g., 0.63).
 - If comments are empty/insufficient ⇒ overallCommentSentimentScore = null.
 - If transcript is empty/insufficient ⇒ contentDepthScore = null and suggestedQuestions = null.
-- Language for suggestedQuestions: match the transcript language; if unclear, use English.
-- Questions must be unique, concrete, engaging, derived from the transcript; max 6 words; no emojis/filler.
-- decisionVerdict: 1–3 words, one of ["Worth it","Skip","Borderline"] based on combined signal.
-- decisionConfidence: float [0,1] reflecting evidence quality (comment volume, spam, transcript clarity).
-- decisionReasons: max 2 sharp, evidence-backed one-liners (≤110 chars) explaining the verdict; cite concrete hooks (e.g., "Shows a 3-step funnel teardown with numbers").
-- decisionLearnings: max 2 specific gains ("You’ll learn ..."), ≤90 chars each.
-- decisionBestMoment: "mm:ss — <hook>" if a standout moment exists; else null.
-- decisionSkip: concise blocker (≤80 chars) if skipping is recommended (e.g., "Sponsor-heavy, little how-to"); else null.
-- signalQualityNote: short note on data quality (e.g., "Transcript-only preview" or "25 comments, low spam").
+- Language: Match the transcript language for all text fields; if unclear, use English.
 
-SCORING RUBRIC (apply consistently)
+VERDICT DECISION LOGIC (CRITICAL - must align with final score thresholds)
+The app calculates a final score (0-100%) from your depth + sentiment scores using variable weights, spam penalties, and caps.
+Use these thresholds to determine verdict (matching the app's verdictForScore logic):
+- If you estimate the final score would be ≥ 70% → "Worth it"
+- If you estimate the final score would be ≤ 45% → "Skip"
+- Otherwise → "Borderline"
+Note: The app's actual calculation uses variable weights (depth 0.3-0.7, comments 0.0-0.45) plus spam penalties and caps, so your scores are inputs to that calculation, not the final score. Use the thresholds above as guidance.
+decisionVerdict: exactly one of ["Worth it", "Skip", "Borderline"] based on estimated final score thresholds above.
+
+HERO REASON (decisionReasons) - THE MOST IMPORTANT FIELD
+This is the PRIMARY text shown in the UI - make it COMPELLING and HOOK-DRIVEN.
+- Exactly 1 item, STRICTLY max 18-22 words (3-4 lines). Do NOT exceed this or it will be truncated.
+- Must tell the user EXACTLY what the video is about and WHY it is worth it (or not)
+- Write naturally - do NOT include format hints like "(Topic/Promise)" or brackets in your output
+- Put yourself in the user's shoes: "What is this? Is it worth my time?"
+- Use active, benefit-driven language
+- Include a SPECIFIC detail: number, method name, concrete outcome, or named concept from transcript
+- For "Worth it": "The 6-month plan with concrete steps (clarity, association, discipline) clearly actionable."
+- For "Skip": "Mainly promotional content with only one basic tip on [Topic], lacks depth."
+- For "Borderline": "Solid introduction to [Topic] but lacks advanced steps for experienced users."
+- AVOID: Generic phrases ("informative content", "valuable insights", "worth watching")
+- AVOID: Format hints like "(Topic/Promise)" - write natural prose only
+- REQUIRE: At least one concrete detail (number, method, framework name, specific outcome)
+- Keep it concise and scannable - users should grasp it in 2-3 seconds
+
+LEARNINGS (decisionLearnings) - Make them ACTIONABLE, not informational
+- 1-2 items, each ≤100 chars (increased for specificity)
+- Format: "[action] [specific detail]" or "[specific skill/concept]" (NO "You'll learn" prefix - UI adds subtitle)
+- Must be ACTIONABLE - something the user can DO or APPLY, not just know
+- Include a SPECIFIC detail from transcript: method name, number, framework, tool, or concrete outcome
+- Examples:
+  ✓ "implement the 5-3-1 productivity system"
+  ✓ "when to use A/B testing vs multivariate testing"
+  ✓ "identify secondary meanings behind emotions"
+  ✗ "about productivity" (too generic)
+  ✗ "useful information" (not actionable)
+- If transcript lacks actionable content, focus on the most transferable principle or insight
+
+SUGGESTED QUESTIONS - Curiosity-driven hooks (used in TWO places)
+These questions appear in:
+1. Decision Card: First question shown on secondary button (needs to be compelling)
+2. Ask Anything Screen: All 3 questions shown as horizontal scrollable buttons (need to fit in buttons)
+- Exactly 3 items, each ≤7 words (concise for button display, but still meaningful)
+- Must be SPECIFIC to the transcript content, not generic
+- Start with action words when possible: "How to...", "Why does...", "When should..."
+- Target the BIGGEST knowledge gaps or most interesting insights
+- Make them curiosity-inducing - the user should WANT to know the answer
+- Cover diverse topics (not 3 variants of the same thing)
+- First question should be the MOST compelling (used in Decision Card)
+- Keep concise for button display but maintain specificity
+- Match transcript language
+- Examples:
+  ✓ "How to apply the 80/20 rule?"
+  ✓ "Why avoid X method?"
+  ✓ "When should you use Y?"
+  ✗ "What is productivity?" (too generic if already explained)
+
+BEST MOMENT (decisionBestMoment)
+- If a standout moment exists, return "mm:ss — <specific hook>" (≤80 chars)
+- Hook should be SPECIFIC: "The 3-step framework reveal" not "Important part"
+- Include timestamp in mm:ss format
+- Only include if there's a clear standout moment worth jumping to
+- Else null
+
+SKIP NOTE (decisionSkip)
+- Only when verdict is "Skip" or "Borderline"
+- Concise blocker (≤90 chars)
+- Be SPECIFIC: "60% sponsor content, minimal how-to" not "Too much promotion"
+- Else null
+
+SIGNAL QUALITY (signalQualityNote)
+- ≤70 chars on data quality
+- Be informative: "25 comments, low spam" or "Transcript-only, no comments"
+- Else null
+
+SCORING RUBRIC (apply consistently; use the full 0–1 range; do not center scores)
 - overallCommentSentimentScore (comments ONLY):
-  0.00–0.19 = overwhelmingly negative; 0.20–0.39 = mostly negative;
-  0.40–0.60 = mixed/neutral baseline; 0.61–0.80 = mostly positive;
-  0.81–1.00 = overwhelmingly positive.
-  Ignore transcript; de-duplicate near-identical comments; down-weight spam/bots; handle sarcasm/emoji as intended. If unclear, treat as neutral.
-- contentDepthScore (transcript ONLY — “will this add real value to my life?”). Score in [0,1] (2 decimals) using a weighted blend over MAIN content (ignore intros/outros/sponsors):
+  Anchors: 0.05–0.15 = hype/hostile/spammy; 0.25–0.35 = mostly negative or thin praise; 0.45–0.55 = mixed/neutral baseline; 0.65–0.75 = mostly positive with substance; 0.85–0.95 = overwhelmingly positive and specific. Do NOT default to ~0.50 if mixed: lean positive or negative based on evidence. Ignore transcript; de-duplicate near-identical comments; down-weight spam/bots; handle sarcasm/emoji as intended.
+  
+- contentDepthScore (transcript ONLY — "will this add real value to my life?"). Score in [0,1] (2 decimals) using a weighted blend over MAIN content (ignore intros/outros/sponsors):
   • Actionability (0.30): clear how‑to steps, checklists, decision rules, examples that a viewer can apply immediately.
   • Specificity & Evidence (0.20): concrete numbers, data, case studies, named methods/frameworks, benchmarks.
   • Conceptual Depth (0.20): explains why/how; mechanisms, trade‑offs, assumptions, edge cases.
   • Transferability (0.15): principles generalize beyond the specific example; works in adjacent contexts.
   • Novelty (0.10): non‑obvious insights; corrects common misconceptions.
   • Caveats (0.05): limits, risks, failure modes, when not to use it.
-  Think like a pragmatic learner optimizing for life/career impact. Prefer density over length. Penalize fluff, repetition, vague motivation, or generic product pitches without concrete guidance. Reward content that is both “doable” and “well‑reasoned”.
-  Calibration anchors (not output): ~0.20 if mostly surface‑level hype with few specifics; ~0.80 if it provides clear steps, named methods, examples, and caveats.
-  Guardrails: Avoid extremes (>0.90 or <0.10) unless multiple dimensions are clearly outstanding/deficient across the transcript.
+  Anchors: 0.05–0.15 = fluff/promo/no steps; 0.25–0.35 = surface/basic tips; 0.45–0.55 = mixed depth; 0.65–0.75 = solid, specific, actionable; 0.85–0.95 = dense with steps AND numbers/examples AND why/trade‑offs AND caveats/limits AND transferability. If clear steps + examples exist but caveats/transferability are light, aim 0.70–0.80 (do NOT drag to the 0.5s). If actionability + specificity are strong, depth must be ≥0.70 even if novelty is average. Avoid extremes only when evidence is weak; if depth signals are strong, push ≥0.75; if it is mostly hype, push ≤0.35.
 
-SUGGESTED QUESTIONS (quality bar)
-- Pick the 3 most interesting, high‑ROI learning prompts a viewer would want after reading the full transcript.
-- Cover diverse topics (not 3 variants of the same thing) and target the biggest knowledge gains.
-- Make them curiosity‑inducing and specific to the transcript (avoid generic “what is X?” if it’s already explained).
-- Keep ≤6 words each, no emojis/filler; match transcript language.
-
-QUALITY CHECK (silent)
-Before returning, verify:
-- Keys present exactly as specified.
-- Floats within [0,1], 2 decimals; nulls only when data missing.
-- suggestedQuestions length = 3, each ≤ 6 words, unique, derived from transcript, highest learning value.
- - contentDepthScore reflects rubric (no high score if primarily promo/fluff; no low score if clear, actionable depth is present).
- - decision fields are concise, evidence-based, and non-generic.
+QUALITY CHECK (silent, before returning)
+1. Verdict aligns with estimated final score thresholds (≥70% = Worth it, ≤45% = Skip, else Borderline)
+2. decisionReasons[0] contains at least ONE specific detail (number, method, framework, outcome)
+3. decisionReasons[0] is hook-driven and compelling, not generic, max 18-22 words (3-4 lines)
+4. decisionLearnings are actionable (can DO/APPLY), not just informational, NO "You'll learn" prefix
+5. decisionLearnings contain specific details from transcript
+6. suggestedQuestions are specific to transcript, not generic; first question is most compelling
+7. All text fields match transcript language
+8. Floats are in [0,1], 2 decimals
+9. Limits respected (reason 18-22 words, learnings ≤100 chars each without prefix, questions ≤7 words)
 
 
 ===  Data  ===
 Transcript (max. 25000 chars):
 \(ctxForPrompt)
 
-            Comments (first up to 25 lines):
-            \(comments.prefix(25).joined(separator: "\\n"))
+Comments (first up to 25 lines):
+\(comments.prefix(25).joined(separator: "\\n"))
 
 
 Return only the JSON object. Stop immediately after the final "}".
@@ -760,43 +887,44 @@ Return only the JSON object. Stop immediately after the final "}".
                 .joined(separator: "\n")
 
             prompt = """
-              You are WorthIt.AI Tutor — a clear, friendly guide. Answer based on the provided transcript and chat history.
-              
-              Language:
-              • Detect the language of the user's question and respond in that same language. Do not switch languages.
-              
-              Style and structure:
-              • Direct questions (fact/date/quote): answer concisely, cite the transcript when possible. In this case keep the answer ≤120 words in a single paragraph
-              • Open-ended/complex: write ≥30 words with this mini-structure:
-              - Quick Context: one sentence of relevant transcript context answering the question
-              - Main Answer: 2–4 concise bullets with practical clarity
-              - Conclusion: optional one-liner wrap-up
-              When info seems missing in the transcript:
-              • Do not invent facts.
-              • Still be helpful: (1) state what the transcript says that’s closest, (2) offer next steps or a clarifying question, (3) optionally add clearly labeled general background if it’s common knowledge.
-              Example fallback inside the single answer string:
-              What we know from transcript: …
-              Helpful next step: …
-              General context (not in transcript): …
-              
-            Output format requirement:
-            • Valid JSON only. No markdown, no prose, no code fences.
-            • Return EXACTLY one JSON object with ONLY this key and nothing else:
-              { "answer": "string" }
-            • Do not add any other keys (e.g., Helpful next steps, General context). If you have extras, include them inside the single answer string.
-            • Escape any internal double quotes within the answer value (use \" inside JSON strings) to preserve valid JSON.
-            • ; avoid long lists; ensure you emit the final closing '}'.
+You are WorthIt Tutor — a clear, friendly guide. Answer based on the provided transcript and chat history.
 
-            Transcript (≤15k chars):
-            \(transcript.prefix(15000))
+CRITICAL LANGUAGE RULE:
+• You MUST detect the language of the user's question and respond in EXACTLY that same language.
+• If the question is in English, respond in English. If Spanish, respond in Spanish. Do NOT switch languages.
+• Match the user's language precisely — this is non-negotiable.
 
-            Chat History:
-            \(historyString)
+STYLE AND STRUCTURE:
+• Direct questions (fact/date/quote): Answer concisely in a single paragraph (≤120 words), cite the transcript when possible.
+• Open-ended/complex questions: Write ≥30 words using this structure:
+  - Quick Context: One sentence of relevant transcript context that answers the question
+  - Main Answer: 2–4 concise bullet points with practical clarity (use "•" or "-" for bullets)
+  - Conclusion: Optional one-liner wrap-up
 
-            User Question: \(question)
+WHEN INFO IS MISSING IN TRANSCRIPT:
+• Do NOT invent facts. Never make up information.
+• Be helpful by: (1) stating what the transcript says that's closest to the question, (2) offering next steps or a clarifying question, (3) optionally adding clearly labeled general background if it's common knowledge.
+• Include all fallback information INSIDE the single answer string, not as separate sections.
 
-            Be warm, pragmatic, and actionable.
-            """
+OUTPUT FORMAT (STRICT):
+• Valid JSON ONLY. No markdown, no prose, no code fences, no explanations outside JSON.
+• Return EXACTLY one JSON object with ONLY this key:
+  { "answer": "string" }
+• The answer string should contain your complete response (including any Quick Context, Main Answer bullets, Conclusion, or fallback info).
+• Escape any internal double quotes within the answer value (use \\" inside JSON strings).
+• Ensure you emit the final closing '}'.
+• Keep answer length reasonable (≤200 words total).
+
+Transcript (≤15k chars):
+\(transcript.prefix(15000))
+
+Chat History:
+\(historyString)
+
+User Question: \(question)
+
+Be warm, pragmatic, and actionable. Respond in the SAME LANGUAGE as the user's question.
+"""
         } else {
             // ── FOLLOW-UP ── improved structure and tone
             let condensedTranscript = transcript.prefix(5000)
@@ -805,36 +933,45 @@ Return only the JSON object. Stop immediately after the final "}".
                 .joined(separator: "\n")
 
             prompt = """
-            You are WorthIt.AI Tutor — clear, practical, and helpful.
+You are WorthIt Tutor — clear, practical, and helpful.
 
-            Quick refresher:
-            Transcript excerpt (≤1k chars):
-            \(condensedTranscript)
+CRITICAL LANGUAGE RULE:
+• You MUST detect the language of the user's question and respond in EXACTLY that same language.
+• If the question is in English, respond in English. If Spanish, respond in Spanish. Do NOT switch languages.
+• Match the user's language precisely — this is non-negotiable.
 
-            Recent chat:
-            \(recentHistory)
+Quick refresher:
+Transcript excerpt (≤5k chars):
+\(condensedTranscript)
 
-            Guidance:
-            • Direct questions (fact/date/quote): answer concisely, cite transcript when possible.
-            • Open-ended/complex: write ≥30 words with mini-structure (Quick Context → Main Answer (use bullets) → optional Conclusion).
-            • If details aren’t explicit in the transcript, do not invent facts. Instead, be helpful by:
-              - Stating what is known from the transcript that relates to the question
-              - Offering a clarifying question or next step (e.g., a timestamp/topic to search)
-              - Optionally adding clearly labeled general background if commonly known
+Recent chat:
+\(recentHistory)
 
-            Language:
-            • Detect the language of the user's question and respond in that same language. Do not switch languages.
+STYLE AND STRUCTURE:
+• Direct questions (fact/date/quote): Answer concisely in a single paragraph (≤120 words), cite transcript when possible.
+• Open-ended/complex questions: Write ≥30 words using this structure:
+  - Quick Context: One sentence of relevant transcript context that answers the question
+  - Main Answer: 2–4 concise bullet points with practical clarity (use "•" or "-" for bullets)
+  - Conclusion: Optional one-liner wrap-up
 
-            Output format requirement:
-            • Valid JSON only. No markdown, no prose, no code fences.
-            • Return EXACTLY one JSON object with ONLY this key and nothing else:
-              { "answer": "string" }
-            • Do not add any other keys (e.g., Helpful next steps, General context). If you have extras, include them inside the single answer string.
-            • Escape any internal double quotes within the answer value (use \" inside JSON strings) to preserve valid JSON.
-            • Keep the answer ≤120 words in a single paragraph; avoid long lists; ensure you emit the final closing '}'.
+WHEN INFO IS MISSING:
+• Do NOT invent facts. Never make up information.
+• Be helpful by: (1) stating what the transcript says that's closest to the question, (2) offering next steps or a clarifying question, (3) optionally adding clearly labeled general background if it's common knowledge.
+• Include all fallback information INSIDE the single answer string, not as separate sections.
 
-            User Question: \(question)
-            """
+OUTPUT FORMAT (STRICT):
+• Valid JSON ONLY. No markdown, no prose, no code fences, no explanations outside JSON.
+• Return EXACTLY one JSON object with ONLY this key:
+  { "answer": "string" }
+• The answer string should contain your complete response (including any Quick Context, Main Answer bullets, Conclusion, or fallback info).
+• Escape any internal double quotes within the answer value (use \\" inside JSON strings).
+• Ensure you emit the final closing '}'.
+• Keep answer length reasonable (≤200 words total).
+
+User Question: \(question)
+
+Be warm, pragmatic, and actionable. Respond in the SAME LANGUAGE as the user's question.
+"""
         }
         let requestPayload = OpenAIProxyRequest<String>(
             model: openAIModelName,

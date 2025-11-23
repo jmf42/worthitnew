@@ -19,10 +19,10 @@ struct Theme {
 
         static let accent = SwiftUI.Color("AccentColor") // Ensure this is defined in Assets
 
-        // Brand gradient stops sampled from the logo glow
-        static let brandCyan         = SwiftUI.Color(UIColor(hex: "3CE2F3")) // slightly toned-down cyan
-        static let brandBlue         = SwiftUI.Color(UIColor(hex: "2A74F5")) // softened mid-blue
-        static let brandPurple       = SwiftUI.Color(UIColor(hex: "7D26E8")) // deeper violet
+        // Brand gradient stops matching the app icon: electric blue (with hint of cyan) → royal blue → rich violet
+        static let brandCyan   = SwiftUI.Color(UIColor(hex: "1E90FF")) // electric blue with hint of cyan (sky blue)
+        static let brandBlue   = SwiftUI.Color(UIColor(hex: "4169E1")) // vibrant royal blue (mid transition)
+        static let brandPurple = SwiftUI.Color(UIColor(hex: "7C3AED")) // rich luminous violet (no pink)
 
         static let success           = SwiftUI.Color.green
         static let warning           = SwiftUI.Color.yellow
@@ -75,8 +75,12 @@ struct Theme {
 
         static let bluePurple = accent // Alias
 
-        // App/logo primary gradient sampled from the logo glow
-        static let brandColors: [SwiftUI.Color] = [Theme.Color.brandCyan, Theme.Color.brandBlue, Theme.Color.brandPurple]
+        // App/logo primary gradient matching the icon: cyan → blue → purple
+        static let brandColors: [SwiftUI.Color] = [
+            Theme.Color.brandCyan,
+            Theme.Color.brandBlue,
+            Theme.Color.brandPurple
+        ]
 
         static func brand(startPoint: UnitPoint = .leading, endPoint: UnitPoint = .trailing) -> LinearGradient {
             LinearGradient(
@@ -89,9 +93,9 @@ struct Theme {
         static func brandSheen(startPoint: UnitPoint = .topLeading, endPoint: UnitPoint = .bottomTrailing) -> LinearGradient {
             LinearGradient(
                 gradient: SwiftUI.Gradient(stops: [
-                    .init(color: Theme.Color.brandCyan.opacity(0.35), location: 0.0),
-                    .init(color: SwiftUI.Color.white.opacity(0.14), location: 0.38),
-                    .init(color: Theme.Color.brandPurple.opacity(0.32), location: 1.0)
+                    .init(color: Theme.Color.brandCyan.opacity(0.40),  location: 0.0),
+                    .init(color: Theme.Color.brandBlue.opacity(0.22),  location: 0.40),
+                    .init(color: Theme.Color.brandPurple.opacity(0.35), location: 1.0)
                 ]),
                 startPoint: startPoint,
                 endPoint: endPoint
@@ -233,6 +237,55 @@ struct Theme {
                     .animation(.spring(response: 0.2, dampingFraction: 0.6),
                                value: configuration.isPressed)
             }
+        }
+
+    }
+}
+
+// MARK: - Common UI elements
+/// Standard back/navigation label to keep visual consistency.
+struct BackButtonLabel: View {
+    var title: String = "Back"
+    var tint: SwiftUI.Color = Theme.Color.secondaryText.opacity(0.85)
+
+    var body: some View {
+        HStack(spacing: 4) { // Reduced spacing to fit better on small screens
+            Image(systemName: "chevron.left")
+                .font(.system(size: 16, weight: .semibold))
+            Text(title)
+                .font(Theme.Font.subheadline.weight(.semibold))
+                .lineLimit(1) // Ensure text doesn't wrap
+                .minimumScaleFactor(0.8) // Allow slight scaling on very small screens
+        }
+        .foregroundColor(tint)
+        .layoutPriority(1) // Prevent compression
+        .fixedSize(horizontal: true, vertical: false) // Prevent horizontal compression
+    }
+}
+
+/// Capsule-style container that wraps the back label with a custom border.
+struct BackButtonCapsule: View {
+    var title: String = "Back"
+    var tint: SwiftUI.Color = Theme.Color.secondaryText.opacity(0.85)
+    var borderGradient: LinearGradient = Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing)
+    var action: (() -> Void)? = nil
+
+    var body: some View {
+        let capsule = BackButtonLabel(title: title, tint: tint)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(borderGradient.opacity(0.85), lineWidth: 1.1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .frame(minWidth: 70) // Minimum width to prevent compression on small screens
+
+        if let action = action {
+            capsule
+                .onTapGesture(perform: action)
+        } else {
+            capsule
         }
     }
 }

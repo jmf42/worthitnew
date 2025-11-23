@@ -29,4 +29,3 @@ gcloud builds submit \
 
 echo "✅ Deployment completed successfully!"
 echo "🌐 Service URL: https://worthit-1023767329330.europe-west1.run.app"
-

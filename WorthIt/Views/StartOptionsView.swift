@@ -314,27 +314,23 @@ struct StartOptionsView: View {
                         .buttonStyle(.plain)
                     } else {
                         Button(action: handlePasteFromClipboard) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "doc.on.doc.fill")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text("Paste")
-                                    .font(Theme.Font.captionBold)
-                            }
-                            .foregroundColor(Theme.Color.primaryText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(Theme.Color.sectionBackground.opacity(0.45))
-                                    .overlay(
-                                        Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.6)
-                                    )
-                            )
-                            .overlay(
-                                Capsule()
-                                    .stroke(borderGradient.opacity(0.55), lineWidth: 0.8)
-                                    .blendMode(.overlay)
-                            )
+                            Text("Paste")
+                                .font(Theme.Font.captionBold)
+                                .foregroundColor(Theme.Color.primaryText)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(Theme.Color.sectionBackground.opacity(0.45))
+                                        .overlay(
+                                            Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                                        )
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .stroke(borderGradient.opacity(0.55), lineWidth: 0.8)
+                                        .blendMode(.overlay)
+                                )
                         }
                         .accessibilityLabel("Paste from Clipboard")
                     }
@@ -378,8 +374,15 @@ struct StartOptionsView: View {
                     .foregroundColor(Theme.Color.primaryText)
                     .padding(.horizontal, 14)
                     .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Theme.Color.sectionBackground.opacity(0.85))
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Theme.Color.sectionBackground.opacity(0.85))
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(
+                                    Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing)
+                                        .opacity(viewModel.isAnalyzeEnabled(for: mainViewModel.viewState) ? 0.15 : 0.05)
+                                )
+                        }
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
@@ -410,7 +413,7 @@ struct StartOptionsView: View {
     }
 
     private var sharePill: some View {
-        let background = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        let background = RoundedRectangle(cornerRadius: 12)
         return HStack(spacing: 12) {
             Text("Share from YouTube")
                 .font(Theme.Font.subheadlineBold)
@@ -441,7 +444,7 @@ struct StartOptionsView: View {
         )
         .overlay(
             background
-                .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
+                .stroke(Theme.Color.accent.opacity(0.0), lineWidth: 1.8)
         )
     }
 
@@ -469,8 +472,8 @@ struct StartOptionsView: View {
             StepGuideRow(
                 number: "2",
                 icon: "square.and.arrow.up",
-                title: "Tap Share → WorthIt.AI",
-                description: "If it’s missing, tap More (…) once and add WorthIt.AI to Favorites.",
+                title: "Tap Share → WorthIt",
+                description: "If it's missing, tap More (…) once and add WorthIt to Favorites.",
                 titleSymbol: "square.and.arrow.up"
             )
             StepGuideRow(

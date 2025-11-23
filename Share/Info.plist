@@ -5,7 +5,7 @@
 	<key>API_PROXY_BASE_URL</key>
 	<string>https://worthit-1023767329330.europe-west1.run.app</string>
 	<key>CFBundleDisplayName</key>
-	<string>WorthIt.AI</string>
+	<string>WorthIt</string>
 	<key>CFBundleExecutable</key>
 	<string>Share</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>WorthIt.AI</string>
+	<string>WorthIt</string>
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>

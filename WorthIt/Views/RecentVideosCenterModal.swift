@@ -6,9 +6,9 @@ struct RecentVideosCenterModal: View {
     let onSelect: (CacheManager.RecentAnalysisItem) -> Void
     let initialItems: [CacheManager.RecentAnalysisItem]?
     @State private var items: [CacheManager.RecentAnalysisItem] = []
+    @State private var orderedRecent: [CacheManager.RecentAnalysisItem] = []
+    @State private var orderedHighScore: [CacheManager.RecentAnalysisItem] = []
     @State private var showContent = false
-    @State private var dragOffset: CGFloat = 0
-    @State private var isDismissing = false
     let borderGradient: LinearGradient
     
     init(
@@ -39,19 +39,10 @@ struct RecentVideosCenterModal: View {
     }
     @State private var selectedSort: SortOption = .recent
 
-    private var orderedItems: [CacheManager.RecentAnalysisItem] {
+    private var currentItems: [CacheManager.RecentAnalysisItem] {
         switch selectedSort {
-        case .recent:
-            return items.sorted { $0.modifiedAt > $1.modifiedAt }
-        case .highScore:
-            return items.sorted { lhs, rhs in
-                let lhsScore = displayedScore(for: lhs) ?? 0
-                let rhsScore = displayedScore(for: rhs) ?? 0
-                if lhsScore == rhsScore {
-                    return lhs.modifiedAt > rhs.modifiedAt
-                }
-                return lhsScore > rhsScore
-            }
+        case .recent: return orderedRecent
+        case .highScore: return orderedHighScore
         }
     }
 
@@ -69,135 +60,69 @@ struct RecentVideosCenterModal: View {
         return f.localizedString(for: latest, relativeTo: Date())
     }
 
-    private var backdropOpacity: Double {
-        let alpha = 0.35 - Double(min(dragOffset, 160)) / 600.0
-        return max(0.05, alpha)
+    private func loadItems() {
+        if let seededItems = initialItems {
+            Task { @MainActor in updateItems(seededItems) }
+            return
+        }
+
+        Task(priority: .userInitiated) {
+            let fetched = await CacheManager.shared.listRecentAnalyses()
+            await MainActor.run {
+                updateItems(fetched)
+            }
+        }
     }
 
-    private func dismiss(after delay: TimeInterval = 0.18, haptic: Bool) {
-        guard !isDismissing else { return }
-        isDismissing = true
-        if haptic {
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        }
-        if !haptic {
-            dragOffset = 0
-        }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-            showContent = false
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            onDismiss()
+    @MainActor
+    private func updateItems(_ newItems: [CacheManager.RecentAnalysisItem]) {
+        items = newItems
+        orderedRecent = newItems.sorted { $0.modifiedAt > $1.modifiedAt }
+        orderedHighScore = newItems.sorted { lhs, rhs in
+            let lhsScore = displayedScore(for: lhs) ?? 0
+            let rhsScore = displayedScore(for: rhs) ?? 0
+            if lhsScore == rhsScore {
+                return lhs.modifiedAt > rhs.modifiedAt
+            }
+            return lhsScore > rhsScore
         }
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                backdrop
-                cardBody(safeAreaInsets: proxy.safeAreaInsets)
+        NavigationView {
+            ScrollView(showsIndicators: false) {
+                cardContent
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    WorthItToolbarTitle()
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onDismiss()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("Back")
+                                .font(Theme.Font.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                    }
+                }
+            }
+            .navigationBarBackButtonHidden(true)
+            .onAppear {
+                loadItems()
             }
         }
         .preferredColorScheme(.dark)
-    }
-
-    private var backdrop: some View {
-        Rectangle()
-            .fill(.ultraThinMaterial)
-            .ignoresSafeArea()
-            .overlay(Theme.Color.darkBackground.opacity(backdropOpacity).ignoresSafeArea())
-            .onTapGesture { dismiss(haptic: false) }
-    }
-
-    private func cardBody(safeAreaInsets: EdgeInsets) -> some View {
-        let horizontalInset = max(12, max(safeAreaInsets.leading, safeAreaInsets.trailing))
-        let navBarHeight: CGFloat = 52
-
-        return ZStack(alignment: .top) {
-            ScrollView(showsIndicators: false) {
-                cardContent
-                    .padding(.horizontal, horizontalInset)
-                    // Include safe area inset so content sits just below the custom toolbar
-                    .padding(.top, navBarHeight + safeAreaInsets.top + 12)
-                    .padding(.bottom, safeAreaInsets.bottom + 24)
-            }
-
-            topNavBar(safeAreaInsets: safeAreaInsets, height: navBarHeight)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .offset(x: dragOffset)
-        .opacity(showContent ? 1 : 0)
-        .scaleEffect(showContent ? 1 : 0.98)
-        .onAppear {
-            dragOffset = 0
-            isDismissing = false
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { showContent = true }
-            if let seededItems = initialItems {
-                items = seededItems
-            } else {
-                Task { @MainActor in
-                    items = await CacheManager.shared.listRecentAnalyses()
-                }
-            }
-        }
-        .gesture(
-            DragGesture(minimumDistance: 15)
-                .onChanged { value in
-                    guard !isDismissing else { return }
-                    let translation = value.translation.width
-                    if translation > 0 {
-                        dragOffset = translation
-                    }
-                }
-                .onEnded { value in
-                    guard !isDismissing else { return }
-                    if value.translation.width > 90 {
-                        let target = UIScreen.main.bounds.width * 0.65
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                            dragOffset = target
-                        }
-                        dismiss(haptic: true)
-                    } else {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) {
-                            dragOffset = 0
-                        }
-                    }
-                }
-        )
-    }
-
-    private func topNavBar(safeAreaInsets: EdgeInsets, height: CGFloat) -> some View {
-        let horizontalInset = max(16, max(safeAreaInsets.leading, safeAreaInsets.trailing) + 6)
-
-        return VStack(spacing: 0) {
-            ZStack {
-                HStack {
-                    Button(action: { dismiss(haptic: false) }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 17, weight: .semibold))
-                            Text("Back")
-                                .font(.system(size: 17))
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(Theme.Color.primaryText)
-
-                    Spacer()
-                }
-
-                WorthItToolbarTitle()
-            }
-            .padding(.horizontal, horizontalInset)
-            .frame(height: height + safeAreaInsets.top, alignment: .bottom)
-        }
-        .frame(maxWidth: .infinity, alignment: .top)
-        .background(
-            Theme.Color.darkBackground.opacity(0.92)
-                .overlay(Theme.Gradient.vignette.opacity(0.25))
-                .ignoresSafeArea(edges: .top)
-        )
-        .shadow(color: .black.opacity(0.24), radius: 10, y: 6)
     }
 
     private var cardContent: some View {
@@ -340,7 +265,7 @@ struct RecentVideosCenterModal: View {
                     Text("No recent insights yet!")
                         .font(Theme.Font.headline.weight(.semibold))
                         .foregroundColor(Theme.Color.primaryText)
-                    Text("Share a YouTube video or paste a link to get started with WorthIt.AI.")
+                    Text("Share a YouTube video or paste a link to get started with WorthIt.")
                         .font(Theme.Font.subheadline)
                         .foregroundColor(Theme.Color.secondaryText)
                         .multilineTextAlignment(.center)
@@ -350,7 +275,7 @@ struct RecentVideosCenterModal: View {
                 .padding(.vertical, 48)
             } else {
                 LazyVStack(spacing: 16) {
-                    ForEach(orderedItems) { item in
+                    ForEach(currentItems) { item in
                         listRow(for: item)
                     }
                 }
@@ -481,18 +406,10 @@ struct RecentVideosCenterModal: View {
             Circle()
                 .strokeBorder(scoreGradient(for: clampedScore), lineWidth: 2)
 
-            VStack(spacing: 1) {
-                Text(formattedScore)
-                    .font(Theme.Font.subheadline.weight(.bold))
-                    .foregroundColor(.white)
-                    .minimumScaleFactor(0.8)
-
-                Text("Score")
-                    .font(Theme.Font.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(Theme.Color.secondaryText.opacity(0.8))
-                    .tracking(0.3)
-            }
+            Text(formattedScore)
+                .font(Theme.Font.subheadline.weight(.bold))
+                .foregroundColor(.white)
+                .minimumScaleFactor(0.8)
         }
         .frame(width: 52, height: 52)
     }

@@ -32,8 +32,31 @@ struct RootView: View {
         appearance.configureWithOpaqueBackground()
         // Match the app's dark background
         appearance.backgroundColor = UIColor(white: 0.12, alpha: 1.0)
+        
+        // Provide a fully transparent bar-button appearance so SwiftUI buttons
+        // inside the toolbar don't inherit the default gray capsule background.
+        let clearButtonAppearance = UIBarButtonItemAppearance(style: .plain)
+        let clearImage = UIImage()
+        
+        func stripBackground(_ state: UIBarButtonItemStateAppearance) {
+            state.backgroundImage = clearImage
+            state.backgroundImagePositionAdjustment = .zero
+            // Critical: Set backgroundColor to clear to remove the grey capsule
+            state.titleTextAttributes[.backgroundColor] = UIColor.clear
+        }
+        
+        stripBackground(clearButtonAppearance.normal)
+        stripBackground(clearButtonAppearance.highlighted)
+        stripBackground(clearButtonAppearance.disabled)
+        stripBackground(clearButtonAppearance.focused)
+        
+        appearance.buttonAppearance = clearButtonAppearance
+        appearance.doneButtonAppearance = clearButtonAppearance
+        appearance.backButtonAppearance = clearButtonAppearance
+        
         UINavigationBar.appearance().standardAppearance = appearance
         UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().compactAppearance = appearance
     }
     @EnvironmentObject var viewModel: MainViewModel
     @EnvironmentObject var subscriptionManager: SubscriptionManager
@@ -113,10 +136,15 @@ struct RootView: View {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                             showDecisionCard = false
                         }
+                    },
+                    onBestMoment: {
+                        openBestPart(for: card)
                     }
                 )
                 .frame(maxWidth: 540)
                 .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(.keyboard)
             }
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .zIndex(1200)
@@ -179,18 +207,29 @@ struct RootView: View {
                 backgroundLayer
                 activeScreen
                 errorOverlay
-                recentModal
                 shareOverlay
                 decisionCardOverlay
                 paywallOverlay
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent() }
-            .toolbarBackground(Theme.Color.darkBackground, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .navigationBarBackButtonHidden(true)
             .preferredColorScheme(.dark)
         }
         .navigationViewStyle(.stack)
+        .sheet(isPresented: $showRecentSheet) {
+            RecentVideosCenterModal(
+                onDismiss: { showRecentSheet = false },
+                onSelect: { item in
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Task { @MainActor in
+                        await viewModel.restoreFromCache(videoId: item.videoId)
+                    }
+                    showRecentSheet = false
+                },
+                borderGradient: standardBorderGradient
+            )
+        }
         .sheet(isPresented: $showAboutSheet) {
             AboutView()
         }
@@ -305,25 +344,6 @@ struct RootView: View {
     }
 
     @ViewBuilder
-    private var recentModal: some View {
-        if showRecentSheet {
-            RecentVideosCenterModal(
-                onDismiss: { withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { showRecentSheet = false } },
-                onSelect: { item in
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    Task { @MainActor in
-                        await viewModel.restoreFromCache(videoId: item.videoId)
-                    }
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { showRecentSheet = false }
-                },
-                borderGradient: standardBorderGradient
-            )
-            .zIndex(1500)
-            .transition(.opacity.combined(with: .scale(scale: 0.98)))
-        }
-    }
-
-    @ViewBuilder
     private var paywallOverlay: some View {
         if let paywallContext = viewModel.activePaywall {
             PaywallView(context: paywallContext, isInExtension: isRunningInExtension)
@@ -369,39 +389,37 @@ struct RootView: View {
     }
 
     // MARK: - Standard box style helpers
+    /// Use the same cyan → blue → purple gradient as the app icon for borders.
     private var standardBorderGradient: LinearGradient {
-        LinearGradient(
-            gradient: Gradient(colors: [Color.blue.opacity(0.6), Color.purple.opacity(0.6)]),
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        Theme.Gradient.brand(startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     @ViewBuilder
     private func standardBox<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             content()
         }
-        .padding(16)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Theme.Color.sectionBackground.opacity(0.55))
                 .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.white.opacity(0.04))
                         .blur(radius: 6)
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.18), lineWidth: 0.7)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(standardBorderGradient.opacity(0.55), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(standardBorderGradient.opacity(0.55), lineWidth: 0.75)
                 .blendMode(.overlay)
         )
-        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     }
 
     // MARK: - Outer frame wrapper (surrounds all boxes subtly)
@@ -410,24 +428,24 @@ struct RootView: View {
         content()
             // Removed .padding(18) from here; padding is now applied to the internal VStack to keep standardBox flexible
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Theme.Color.sectionBackground.opacity(0.25))
                     .background(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .fill(Color.white.opacity(0.05))
                             .blur(radius: 10)
                     )
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.white.opacity(0.16), lineWidth: 0.8)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 0.7)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(standardBorderGradient.opacity(0.45), lineWidth: 0.9)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(standardBorderGradient.opacity(0.45), lineWidth: 0.8)
                     .blendMode(.overlay)
             )
-            .shadow(color: Color.black.opacity(0.28), radius: 14, y: 6)
+            .shadow(color: Color.black.opacity(0.24), radius: 12, y: 5)
     }
 
     // Split idle home view to reduce type-checking complexity
@@ -497,7 +515,7 @@ struct RootView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("WorthIt.AI")
+                    Text("WorthIt")
                         .font(Theme.Font.title3.weight(.bold))
                         .foregroundStyle(Theme.Gradient.appLogoText())
                     Text("AI‑powered insights, summaries, and Q&A for YouTube videos")
@@ -594,7 +612,7 @@ struct RootView: View {
             HStack(spacing: 8) {
                 Image(systemName: "info.circle.fill")
                     .font(.system(size: 16, weight: .medium))
-                Text("About WorthIt.AI")
+                Text("About WorthIt")
                     .font(Theme.Font.subheadline.weight(.medium))
             }
             .foregroundColor(Theme.Color.secondaryText)
@@ -677,19 +695,19 @@ struct RootView: View {
 
         var body: some View {
             ZStack(alignment: .topTrailing) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Subscribe to Premium")
-                        .font(Theme.Font.subheadline.weight(.semibold))
-                        .foregroundColor(.white)
-
-                    Text("Go unlimited - remove the 5 videos per day cap and unlock every WorthIt recap the moment inspiration strikes.")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(.white.opacity(0.82))
-                        .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Unlock Premium")
+                            .font(Theme.Font.subheadline.weight(.semibold))
+                            .foregroundColor(.white)
+                        Text("Unlimited analyses")
+                            .font(Theme.Font.caption2)
+                            .foregroundColor(.white.opacity(0.85))
+                    }
+                    Spacer()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(Theme.Gradient.appBluePurple.opacity(0.85))
@@ -728,7 +746,7 @@ struct RootView: View {
         }
         // Hide Back on initial options when running inside the Share Extension
         if viewModel.viewState == .showingEssentials || viewModel.viewState == .showingAskAnything || (viewModel.viewState == .showingInitialOptions && !isRunningInExtension) {
-            ToolbarItem(placement: .navigationBarLeading) {
+            ToolbarItem(placement: .topBarLeading) {
                 Button {
                     if viewModel.viewState == .showingInitialOptions {
                         viewModel.goToHome()
@@ -738,12 +756,14 @@ struct RootView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                         Text("Back")
-                            .font(.system(size: 17))
+                            .font(Theme.Font.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
                 }
-                .foregroundColor(Theme.Color.primaryText)
                 .transition(.opacity.combined(with: .move(edge: .leading)))
             }
         }
@@ -1155,23 +1175,13 @@ struct ShareExplanationModal: View {
                     Button(action: onDismiss) {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(.system(size: 14, weight: .semibold))
                             Text("Back")
-                                .font(Theme.Font.subheadline.weight(.medium))
+                                .font(Theme.Font.subheadline.weight(.semibold))
                         }
                         .foregroundColor(Theme.Color.accent)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Theme.Color.sectionBackground.opacity(0.6))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(borderGradient.opacity(0.3), lineWidth: 1)
-                        )
                     }
-                    .accessibilityLabel("Dismiss Share Explanation") // Added accessibility label
+                    .accessibilityLabel("Dismiss Share Explanation")
                     Spacer()
                 }
                 .padding(.horizontal, 14)
@@ -1202,8 +1212,8 @@ struct ShareExplanationModal: View {
                     VStack(alignment: .leading, spacing: 20) {
                         StepByStepGuide(steps: [
                         StepData(icon: "play.rectangle.fill", title: "Open a YouTube Video", description: "Pick any video you want to analyze."),
-                        StepData(icon: "square.and.arrow.up", title: "Tap the Share Button", description: "Tap the Share arrow under the video. If YouTube shows its vertical overlay first, tap Share again to open the iOS Share Sheet, then tap More (…) if you still don’t see WorthIt.AI."),
-                        StepData(icon: "sparkles", title: "Choose WorthIt.AI", description: "Select WorthIt.AI from the Share Sheet to send the link into WorthIt.")
+                        StepData(icon: "square.and.arrow.up", title: "Tap the Share Button", description: "Tap the Share arrow under the video. If YouTube shows its vertical overlay first, tap Share again to open the iOS Share Sheet, then tap More (…) if you still don't see WorthIt."),
+                        StepData(icon: "sparkles", title: "Choose WorthIt", description: "Select WorthIt from the Share Sheet to send the link into WorthIt.")
                     ])
 
                         AddToFavoritesSection()
@@ -1270,7 +1280,7 @@ struct StepByStepGuide: View {
 struct AddToFavoritesSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("If you don’t see WorthIt.AI")
+            Text("If you don't see WorthIt")
                 .font(Theme.Font.headline.weight(.semibold))
                 .foregroundColor(Theme.Color.primaryText)
                 .padding(.top, 10)
@@ -1289,10 +1299,10 @@ struct AddToFavoritesSection: View {
                     Text("1. Swipe up on the Share Sheet and tap More (…) at the end of the horizontal row.")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.Color.secondaryText)
-                    Text("2. Tap “Edit Actions…”, then tap the green + next to WorthIt.AI to move it into Favorites and tap Done.")
+                    Text("2. Tap \"Edit Actions…\", then tap the green + next to WorthIt to move it into Favorites and tap Done.")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.Color.secondaryText)
-                    Text("3. Optional: drag WorthIt.AI to the top of Favorites so it always appears first.")
+                    Text("3. Optional: drag WorthIt to the top of Favorites so it always appears first.")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.Color.secondaryText)
                 }
@@ -1363,7 +1373,7 @@ struct OnboardingView: View {
                 cards: [
                     OnboardingCard(icon: "play.rectangle.on.rectangle.fill", title: "Watch the instant demo", description: "See a real video compressed into the WorthIt experience.", action: .demoPlayback),
                     OnboardingCard(icon: "link.circle.fill", title: "Paste a YouTube link", description: "Drop any URL and WorthIt handles the rest.", action: .focusPaste),
-                    OnboardingCard(icon: "square.and.arrow.up", title: "Share from the YouTube app", description: "Tap the Share arrow, then More (…) if you need to reveal WorthIt.AI and pin it in Favorites.", action: .shareSetup)
+                    OnboardingCard(icon: "square.and.arrow.up", title: "Share from the YouTube app", description: "Tap the Share arrow, then More (…) if you need to reveal WorthIt and pin it in Favorites.", action: .shareSetup)
                 ]
             )
         ]

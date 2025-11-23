@@ -203,12 +203,14 @@ actor CacheManager {
 
     // MARK: - Recent Analyses (no database)
     struct RecentAnalysisItem: Identifiable, Sendable {
-        let id = UUID()
         let videoId: String
         let title: String
         let thumbnailURL: URL?
         let finalScore: Double?
         let modifiedAt: Date
+
+        // Stable identifier to keep SwiftUI diffing smooth between reloads.
+        var id: String { "\(videoId)_\(modifiedAt.timeIntervalSince1970)" }
     }
 
     func listRecentAnalyses(limit: Int? = nil) -> [RecentAnalysisItem] {

@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>WorthIt.AI — Signal. Not noise.</title>
+    <meta name="description" content="WorthIt.AI turns any YouTube link into instant highlights, a Worth-It Score, and the crowd pulse so you can skip the rabbit hole." />
+    <meta name="theme-color" content="#06070f" />
+    <link rel="apple-touch-icon" href="static/assets/worthit-logo.png" />
+    <style>
+      :root {
+        --bg0: #04050d;
+        --bg1: #0c1124;
+        --text: #f7f8ff;
+        --muted: #a2aac4;
+        --accent-a: #7c3aed;
+        --accent-b: #22d3ee;
+        --card: rgba(15, 18, 36, 0.9);
+        --border: rgba(255, 255, 255, 0.08);
+        --radius-lg: 28px;
+        --radius-md: 18px;
+        --radius-sm: 12px;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1200px 860px at 78% -10%, rgba(34, 211, 238, 0.16), transparent 70%),
+          radial-gradient(1000px 700px at -15% 6%, rgba(124, 58, 237, 0.18), transparent 68%),
+          linear-gradient(180deg, var(--bg0), var(--bg1));
+        overflow-x: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a { color: inherit; text-decoration: none; }
+
+      .container {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: clamp(18px, 3vw, 34px);
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: clamp(22px, 4vw, 36px);
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+      }
+
+      .brand img {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        box-shadow: 0 18px 36px rgba(124, 58, 237, 0.36);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+      }
+
+      .brand span {
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        background: linear-gradient(120deg, rgba(140, 92, 255, 0.95), rgba(56, 208, 255, 0.95));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        text-shadow: 0 12px 40px rgba(84, 143, 255, 0.35);
+      }
+
+      nav {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      nav a {
+        padding: 8px 16px;
+        border-radius: var(--radius-sm);
+        color: var(--muted);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        background: rgba(255, 255, 255, 0.02);
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, color 0.2s ease;
+      }
+
+      nav a:hover {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        transform: translateY(-1px);
+        box-shadow: 0 8px 16px rgba(6, 8, 20, 0.35);
+      }
+
+      .nav-cta {
+        border: none;
+        background: linear-gradient(135deg, #8d3eed, #1dc6ff);
+        color: #05060f;
+        font-weight: 600;
+        box-shadow: 0 20px 44px rgba(49, 136, 255, 0.35);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .nav-cta::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.25) 0%, rgba(255, 255, 255, 0) 60%);
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+
+      .nav-cta:hover::after {
+        opacity: 1;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr);
+        gap: clamp(22px, 5vw, 42px);
+        align-items: center;
+      }
+
+      @media (max-width: 980px) {
+        .hero { grid-template-columns: 1fr; }
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.04);
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      .eyebrow span {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--accent-b);
+        box-shadow: 0 0 12px rgba(34, 211, 238, 0.8);
+      }
+
+      h1 {
+        margin: 16px 0 10px;
+        font-size: clamp(32px, 5.4vw, 64px);
+        line-height: 1.03;
+        letter-spacing: -0.02em;
+      }
+
+      h1 .accent {
+        background: linear-gradient(90deg, var(--accent-a), var(--accent-b));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        text-shadow: 0 10px 44px rgba(124, 58, 237, 0.28);
+      }
+
+      .subtitle {
+        margin: 0 0 18px;
+        max-width: 48ch;
+        color: var(--muted);
+        font-size: clamp(16px, 2.2vw, 19px);
+      }
+
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 18px;
+      }
+
+      .chip {
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--muted);
+        font-size: 13px;
+        letter-spacing: 0.02em;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 18px;
+        border-radius: 14px;
+        font-weight: 600;
+        border: none;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease, border 0.25s ease;
+      }
+
+      .btn::after {
+        content: "";
+        position: absolute;
+        inset: -40% auto auto -40%;
+        width: 140%;
+        height: 140%;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.25), transparent 60%);
+        transform: translateX(-60%);
+        transition: transform 0.4s ease;
+        pointer-events: none;
+      }
+
+      .btn:hover::after {
+        transform: translateX(10%);
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #8a44ff, #26d1f6);
+        color: #05060f;
+        box-shadow: 0 24px 52px rgba(43, 136, 255, 0.32);
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 28px 60px rgba(43, 136, 255, 0.38);
+      }
+
+      .btn-secondary {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+        color: var(--text);
+      }
+
+      .btn-secondary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 18px 36px rgba(6, 8, 18, 0.35);
+      }
+
+      .meta-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .appstore-badge {
+        height: 44px;
+        width: auto;
+        filter: drop-shadow(0 12px 24px rgba(8, 10, 24, 0.45));
+      }
+
+      .device-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+        perspective: 1200px;
+      }
+
+      .phone {
+        position: relative;
+        width: min(420px, 92vw);
+        aspect-ratio: 9 / 19.5;
+        border-radius: 44px;
+        background: linear-gradient(180deg, #0f0f14, #0f1018);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.65), 0 0 0 8px rgba(124, 58, 237, 0.12);
+        overflow: hidden;
+        transform-style: preserve-3d;
+        transform: rotateY(-12deg) rotateX(2deg);
+        transition: transform 0.4s ease;
+      }
+
+      .phone::before {
+        content: "";
+        position: absolute;
+        inset: -2px;
+        border-radius: 46px;
+        padding: 2px;
+        background: linear-gradient(140deg, rgba(124, 58, 237, 0.55), rgba(34, 211, 238, 0.45), rgba(124, 58, 237, 0.55));
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        pointer-events: none;
+      }
+
+      .phone::after {
+        content: "";
+        position: absolute;
+        inset: -35% -25% auto -25%;
+        height: 58%;
+        background: radial-gradient(circle, rgba(124, 58, 237, 0.26), transparent 70%);
+        opacity: 0;
+        transition: opacity 0.4s ease;
+        pointer-events: none;
+      }
+
+      .phone:hover::after {
+        opacity: 1;
+      }
+
+      .notch {
+        position: absolute;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 36%;
+        height: 20px;
+        border-radius: 0 0 18px 18px;
+        background: rgba(10, 11, 18, 0.88);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-top: none;
+        box-shadow: inset 0 -4px 6px rgba(0, 0, 0, 0.45);
+        z-index: 3;
+      }
+
+      .screen-stack {
+        position: absolute;
+        inset: 8px;
+        border-radius: 36px;
+        overflow: hidden;
+        background: #000;
+      }
+
+      .screen-stack img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top center;
+        display: block;
+        opacity: 1;
+        transform: scale(1);
+        transition: opacity 0.4s ease, transform 0.4s ease;
+      }
+
+      .action-buttons {
+        display: grid;
+        gap: 12px;
+        width: min(420px, 92vw);
+      }
+
+      .action-card {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 18px;
+        border-radius: 18px;
+        border: none;
+        background: linear-gradient(140deg, rgba(124, 58, 237, 0.22), rgba(34, 211, 238, 0.18));
+        color: #fff;
+        cursor: pointer;
+        box-shadow: 0 24px 48px rgba(6, 10, 28, 0.46);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .action-card .icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: rgba(255, 255, 255, 0.16);
+        font-size: 16px;
+      }
+
+      .action-card .copy {
+        display: grid;
+        gap: 4px;
+      }
+
+      .action-card strong {
+        font-size: 15px;
+      }
+
+      .action-card small {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.72);
+      }
+
+      .action-card .chevron {
+        font-size: 22px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.7);
+      }
+
+      .action-card.essential {
+        background: linear-gradient(140deg, rgba(255, 186, 96, 0.3), rgba(110, 235, 199, 0.2));
+      }
+
+      .action-card.ask {
+        background: linear-gradient(140deg, rgba(110, 136, 255, 0.3), rgba(170, 102, 255, 0.2));
+      }
+
+      .action-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 32px 58px rgba(6, 10, 28, 0.5);
+      }
+
+      .action-card.active {
+        box-shadow: 0 36px 64px rgba(34, 211, 238, 0.32);
+      }
+
+      section:not(.hero) {
+        margin-top: clamp(54px, 8vw, 84px);
+      }
+
+      .section-title {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 26px;
+      }
+
+      .section-title p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 54ch;
+      }
+
+      .feature-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      @media (max-width: 960px) {
+        .feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+
+      @media (max-width: 680px) {
+        .feature-grid { grid-template-columns: 1fr; }
+      }
+
+      .feature-card {
+        padding: 20px;
+        border-radius: var(--radius-md);
+        background: var(--card);
+        border: 1px solid var(--border);
+        box-shadow: 0 22px 40px rgba(6, 8, 20, 0.55);
+        display: grid;
+        gap: 8px;
+      }
+
+      .feature-card h3 { margin: 0; font-size: 18px; }
+      .feature-card p { margin: 0; color: var(--muted); }
+
+      .cta-strip {
+        margin: clamp(50px, 8vw, 80px) 0 clamp(44px, 6vw, 70px);
+        padding: 26px;
+        border-radius: var(--radius-lg);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: linear-gradient(110deg, rgba(124, 58, 237, 0.16), rgba(34, 211, 238, 0.18));
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .cta-strip p { margin: 0; font-weight: 600; }
+      .cta-strip span { display: block; color: var(--muted); margin-top: 6px; }
+
+      footer {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+        justify-content: space-between;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 28px 0 42px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      footer nav { display: flex; gap: 16px; flex-wrap: wrap; }
+      footer nav a:hover { color: var(--text); }
+
+      @media (prefers-reduced-motion: reduce) {
+        .phone, .btn, nav a, .hero, .feature-card, .action-card { transition: none !important; }
+      }
+
+      @media (max-width: 900px) {
+        header {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 20px;
+        }
+
+        nav {
+          width: 100%;
+          justify-content: flex-start;
+        }
+      }
+
+      @media (max-width: 640px) {
+        header {
+          align-items: center;
+        }
+
+        nav {
+          justify-content: center;
+          gap: 10px;
+        }
+
+        nav a {
+          width: 100%;
+          text-align: center;
+        }
+
+        .hero {
+          grid-template-columns: 1fr;
+          text-align: center;
+          gap: 28px;
+        }
+
+        .chip-row,
+        .meta-row {
+          justify-content: center;
+        }
+
+        .cta-row {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .cta-row .btn {
+          width: 100%;
+        }
+
+        .device-wrap {
+          gap: 20px;
+        }
+
+        .phone {
+          width: min(320px, 88vw);
+        }
+
+        .action-buttons {
+          width: min(320px, 88vw);
+        }
+
+        .cta-strip {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        footer {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        footer nav {
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <a class="brand" href="https://worthit.tuliai.com/">
+          <img src="/static/assets/worthit-logo.png" alt="WorthIt.AI logo" />
+          <span>WorthIt.AI</span>
+        </a>
+        <nav>
+          <a href="https://worthit.tuliai.com/support">Support</a>
+          <a href="https://worthit.tuliai.com/privacy">Privacy</a>
+          <a href="https://worthit.tuliai.com/terms">Terms</a>
+          <a class="nav-cta" href="https://apps.apple.com/us/app/worthit-ai-video-summaries/id6749246821" target="_blank" rel="noopener noreferrer">Get the app</a>
+        </nav>
+      </header>
+
+      <section class="hero">
+        <div>
+          <div class="eyebrow"><span></span>Five free analyses daily</div>
+          <h1><span class="accent">Signal.</span> Not noise.</h1>
+          <p class="subtitle">WorthIt.AI compresses any YouTube link into highlights, a Worth-It Score, and the crowd pulse before you decide to watch.</p>
+          <div class="chip-row">
+            <div class="chip">Highlights</div>
+            <div class="chip">Worth-It Score</div>
+            <div class="chip">Comment intel</div>
+            <div class="chip">Ask Anything</div>
+          </div>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://apps.apple.com/us/app/worthit-ai-video-summaries/id6749246821" target="_blank" rel="noopener noreferrer">Download on the App Store</a>
+            <a class="btn btn-secondary" href="#tour">See the features</a>
+          </div>
+          <div class="meta-row">
+            <a href="https://apps.apple.com/us/app/worthit-ai-video-summaries/id6749246821" target="_blank" rel="noopener noreferrer">
+              <img class="appstore-badge" src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=120x40&releaseDate=1317600000" alt="Download on the App Store" />
+            </a>
+            <span>No account • Share sheet ready • Privacy-first</span>
+          </div>
+        </div>
+
+        <div class="device-wrap">
+          <div class="phone" id="phone">
+            <div class="notch" aria-hidden="true"></div>
+            <div class="screen-stack">
+              <img id="phone-screen" src="static/assets/screen-overview.png" alt="WorthIt overview screen" loading="lazy" />
+            </div>
+          </div>
+          <div class="action-buttons" aria-label="Interact with WorthIt features">
+            <button type="button" class="action-card essential" data-screen="essentials">
+              <span class="icon">✦</span>
+              <span class="copy">
+                <strong>Essentials</strong>
+                <small>Get key points quickly</small>
+              </span>
+              <span class="chevron">›</span>
+            </button>
+            <button type="button" class="action-card ask" data-screen="ask">
+              <span class="icon">💬</span>
+              <span class="copy">
+                <strong>Ask Anything</strong>
+                <small>Interact with the content</small>
+              </span>
+              <span class="chevron">›</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tour">
+        <div class="section-title">
+          <h2>Everything you need before you hit play</h2>
+          <p>WorthIt mirrors the native iOS experience—fast, focused, and grounded in what was actually said.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <h3>Highlights in seconds</h3>
+            <p>Summaries stay anchored to the real transcript so you catch the signal, not speculation.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Worth-It Score</h3>
+            <p>A transparent blend of depth, clarity, and community reaction that tells you if it’s worth your time.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Comment intelligence</h3>
+            <p>Surface sentiment swings, standout themes, and representative quotes without sifting through the feed.</p>
+          </article>
+        </div>
+      </section>
+
+      <div class="cta-strip">
+        <div>
+          <p>Ready to skip the rabbit hole?</p>
+          <span>Join WorthIt viewers already stealing minutes back from endless videos.</span>
+        </div>
+        <a class="btn btn-primary" href="https://apps.apple.com/us/app/worthit-ai-video-summaries/id6749246821" target="_blank" rel="noopener noreferrer">Get WorthIt.AI free</a>
+      </div>
+
+      <footer>
+        <div>© <span id="year"></span> WorthIt.AI — Built by TuliAI</div>
+        <nav>
+          <a href="https://worthit.tuliai.com/support">Support</a>
+          <a href="https://worthit.tuliai.com/privacy">Privacy</a>
+          <a href="https://worthit.tuliai.com/terms">Terms</a>
+          <a href="mailto:worthit.tuliai@gmail.com">Contact</a>
+        </nav>
+      </footer>
+    </div>
+    <script>
+      document.getElementById('year').textContent = new Date().getFullYear();
+
+      const phone = document.getElementById('phone');
+      const phoneScreen = document.getElementById('phone-screen');
+      const actionCards = document.querySelectorAll('.action-card');
+
+      const screenSources = {
+        overview: 'static/assets/screen-overview.png',
+        essentials: 'static/assets/screen-essentials.png',
+        ask: 'static/assets/screen-ask.png'
+      };
+
+      let currentScreen = 'overview';
+
+      function setScreen(target) {
+        const next = target === currentScreen ? 'overview' : target;
+        currentScreen = next;
+
+        actionCards.forEach(card => {
+          card.classList.toggle('active', card.dataset.screen === currentScreen && currentScreen !== 'overview');
+        });
+
+        const src = screenSources[currentScreen] || screenSources.overview;
+        const transformValue = currentScreen === 'overview' ? 'scale(1)' : 'scale(1.01)';
+        phoneScreen.style.opacity = '0';
+        setTimeout(() => {
+          phoneScreen.style.transform = transformValue;
+          if (phoneScreen.getAttribute('src') === src) {
+            phoneScreen.style.opacity = '1';
+            return;
+          }
+          phoneScreen.src = src;
+        }, 120);
+      }
+
+      actionCards.forEach(card => {
+        card.addEventListener('click', () => {
+          setScreen(card.dataset.screen);
+        });
+      });
+
+      phoneScreen.addEventListener('load', () => {
+        phoneScreen.style.opacity = '1';
+      });
+
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      if (prefersReducedMotion) {
+        phone.style.transform = 'rotateY(-12deg) rotateX(2deg)';
+      }
+    </script>
+  </body>
+</html>
+      .phone.hover-active::after {
+        opacity: 1;
+      }

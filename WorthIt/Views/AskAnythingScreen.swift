@@ -331,18 +331,24 @@ struct ChatMessageView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Normalize inline bullet lists like "Practical steps: - Do X - Do Y"
+        // Also handle bullet characters (• and -)
         let inlineBulletPatterns: [String] = [
             ": - ",
             ". - ",
             "? - ",
-            "! - "
+            "! - ",
+            ": • ",
+            ". • ",
+            "? • ",
+            "! • "
         ]
         for pattern in inlineBulletPatterns {
             let replacement = "\(pattern.prefix(1))\n- "
             normalized = normalized.replacingOccurrences(of: pattern, with: replacement)
         }
-        // Fallback: any remaining " - " that likely indicates bullet gets own line
+        // Fallback: any remaining " - " or " • " that likely indicates bullet gets own line
         normalized = normalized.replacingOccurrences(of: " - ", with: "\n- ")
+        normalized = normalized.replacingOccurrences(of: " • ", with: "\n- ")
 
         if message.isUser {
             return normalized
@@ -380,9 +386,11 @@ struct ChatMessageView: View {
             }
 
             let lower = trimmed.lowercased()
+            // Match heading (handles both "quick context:" and "quick context: " formats)
             if let heading = headingLookup.first(where: { lower.hasPrefix($0.0) }) {
                 flushParagraph()
                 segments.append(.heading(heading.1))
+                // Drop the heading prefix and trim whitespace (handles space after colon automatically)
                 let remainder = trimmed.dropFirst(heading.0.count).trimmingCharacters(in: .whitespaces)
                 if !remainder.isEmpty {
                     paragraphBuffer = remainder
@@ -390,7 +398,8 @@ struct ChatMessageView: View {
                 continue
             }
 
-            if trimmed.hasPrefix("- ") {
+            // Handle both "- " and "• " bullet formats
+            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("• ") {
                 flushParagraph()
                 let bulletText = trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces)
                 if !bulletText.isEmpty {

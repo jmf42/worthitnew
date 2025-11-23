@@ -15,7 +15,7 @@ struct AppConstants {
         AppConstants.subscriptionProductAnnualID,
         AppConstants.subscriptionProductWeeklyID
     ]
-    static let dailyFreeAnalysisLimit = 5
+    static let dailyFreeAnalysisLimit = 3
     static let subscriptionDeepLink = "worthitai://subscribe"
     static let termsOfUseURL = URL(string: "https://worthit.tuliai.com/terms")!
     static let privacyPolicyURL = URL(string: "https://worthit.tuliai.com/privacy")!
@@ -216,7 +216,6 @@ struct CommentInsights: Codable, Identifiable {
 
     // Decision/preview & value props
     let decisionVerdict: String?
-    let decisionConfidence: Double?
     let decisionReasons: [String]
     let decisionLearnings: [String]
     let decisionBestMoment: String?
@@ -226,7 +225,7 @@ struct CommentInsights: Codable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case videoId, viewerTips
         case overallCommentSentimentScore, contentDepthScore, suggestedQuestions
-        case decisionVerdict, decisionConfidence, decisionReasons, decisionLearnings, decisionBestMoment, decisionSkip, signalQualityNote
+        case decisionVerdict, decisionReasons, decisionLearnings, decisionBestMoment, decisionSkip, signalQualityNote
     }
 
     init(from decoder: Decoder) throws {
@@ -238,7 +237,6 @@ struct CommentInsights: Codable, Identifiable {
         // Ensure we always have a questions array
         suggestedQuestions = (try? c.decode([String].self, forKey: .suggestedQuestions)) ?? []
         decisionVerdict = try c.decodeIfPresent(String.self, forKey: .decisionVerdict)
-        decisionConfidence = try c.decodeIfPresent(Double.self, forKey: .decisionConfidence)
         decisionReasons = (try? c.decode([String].self, forKey: .decisionReasons)) ?? []
         decisionLearnings = (try? c.decode([String].self, forKey: .decisionLearnings)) ?? []
         decisionBestMoment = try c.decodeIfPresent(String.self, forKey: .decisionBestMoment)
@@ -254,7 +252,6 @@ struct CommentInsights: Codable, Identifiable {
         contentDepthScore: Double? = nil,
         suggestedQuestions: [String] = [],
         decisionVerdict: String? = nil,
-        decisionConfidence: Double? = nil,
         decisionReasons: [String] = [],
         decisionLearnings: [String] = [],
         decisionBestMoment: String? = nil,
@@ -267,7 +264,6 @@ struct CommentInsights: Codable, Identifiable {
         self.contentDepthScore = contentDepthScore
         self.suggestedQuestions = suggestedQuestions
         self.decisionVerdict = decisionVerdict
-        self.decisionConfidence = decisionConfidence
         self.decisionReasons = decisionReasons
         self.decisionLearnings = decisionLearnings
         self.decisionBestMoment = decisionBestMoment
@@ -360,7 +356,6 @@ struct DecisionCardModel: Equatable {
     let commentsChip: DecisionProofChip
     let jumpChip: DecisionProofChip
     let verdict: DecisionVerdict
-    let confidence: DecisionConfidence
     let timeValue: String?
     let thumbnailURL: URL?
     let bestStartSeconds: Int?
@@ -380,24 +375,6 @@ enum DecisionVerdict: Equatable {
     case worthIt
     case skip
     case maybe
-}
-
-struct DecisionConfidence: Equatable {
-    enum Level {
-        case high
-        case medium
-        case low
-    }
-
-    let level: Level
-
-    var label: String {
-        switch level {
-        case .high: return "High confidence"
-        case .medium: return "Medium confidence"
-        case .low: return "Estimated"
-        }
-    }
 }
 
 // MARK: - UserFriendlyError Struct
@@ -459,6 +436,83 @@ extension Error {
 struct BackendTranscriptResponse: Codable {
     let video_id: String? // Make optional if backend might omit
     let text: String?     // Make optional
+}
+
+struct TranscriptSnippet: Codable, Identifiable {
+    let id = UUID()
+    let text: String
+    let start: Double
+    let duration: Double
+
+    enum CodingKeys: String, CodingKey {
+        case text, start, duration
+    }
+}
+
+struct BackendTranscriptWithSnippetsResponse: Codable {
+    let video_id: String?
+    let text: String?
+    let language: TranscriptLanguage?
+    let tracks: [String]?
+    let snippets: [TranscriptSnippet]?
+
+    struct TranscriptLanguage: Codable {
+        let code: String
+        let label: String
+        let is_generated: Bool
+    }
+}
+
+// MARK: - Chapter Models
+struct VideoChapter: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let startTime: Double
+    let duration: Double
+    let timestampString: String
+
+    init(snippet: TranscriptSnippet) {
+        self.title = snippet.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.startTime = snippet.start
+        self.duration = snippet.duration
+
+        // Format timestamp as MM:SS
+        let minutes = Int(startTime) / 60
+        let seconds = Int(startTime) % 60
+        self.timestampString = String(format: "%d:%02d", minutes, seconds)
+    }
+
+    static func createChapters(from snippets: [TranscriptSnippet]?) -> [VideoChapter] {
+        guard let snippets = snippets, !snippets.isEmpty else { return [] }
+
+        // Group snippets into logical chapters (3-7 chapters max)
+        let totalSnippets = snippets.count
+        let targetChapterCount = min(max(totalSnippets / 3, 3), 7)
+
+        // Calculate chapter size
+        let chapterSize = max(totalSnippets / targetChapterCount, 1)
+
+        var chapters: [VideoChapter] = []
+        var currentSnippetIndex = 0
+
+        while currentSnippetIndex < totalSnippets && chapters.count < targetChapterCount {
+            let endIndex = min(currentSnippetIndex + chapterSize, totalSnippets)
+            let chapterSnippets = Array(snippets[currentSnippetIndex..<endIndex])
+
+            // Combine snippets for this chapter
+            let combinedText = chapterSnippets.map { $0.text }.joined(separator: " ")
+            let startTime = chapterSnippets.first?.start ?? 0
+            let totalDuration = chapterSnippets.reduce(0) { $0 + $1.duration }
+
+            // Create a synthetic snippet for the chapter
+            let chapterSnippet = TranscriptSnippet(text: combinedText, start: startTime, duration: totalDuration)
+            chapters.append(VideoChapter(snippet: chapterSnippet))
+
+            currentSnippetIndex = endIndex
+        }
+
+        return chapters
+    }
 }
 
 struct BackendCommentsResponse: Codable {
