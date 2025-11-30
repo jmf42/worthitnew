@@ -64,7 +64,7 @@ struct AskAnythingScreen: View {
         .onDisappear {
             viewModel.currentScreenOverride = nil
         }
-        .navigationBarBackButtonHidden(false)
+        .navigationBarBackButtonHidden(true)
     }
 
     private var messageListView: some View {
@@ -260,12 +260,13 @@ struct ChatMessageView: View {
         let segments = parsedSegments()
 
         return VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                 switch segment {
                 case .heading(let text):
                     Text(text)
                         .font(Theme.Font.subheadlineBold)
                         .foregroundColor(message.isUser ? .white : Theme.Color.primaryText)
+                        .padding(.top, (text == "Conclusion" && index > 0) ? 20 : 0) // Space before Conclusion to separate from Main Answer
                 case .paragraph(let text):
                     Text(text)
                         .font(Theme.Font.body)
@@ -330,6 +331,14 @@ struct ChatMessageView: View {
             .replacingOccurrences(of: "\r", with: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Split inline headings onto their own lines (e.g., "text. Main Answer:" -> "text.\nMain Answer:")
+        normalized = normalized.replacingOccurrences(of: ". Main Answer:", with: ".\nMain Answer:", options: .caseInsensitive)
+        normalized = normalized.replacingOccurrences(of: " Main Answer:", with: "\nMain Answer:", options: .caseInsensitive)
+        normalized = normalized.replacingOccurrences(of: ". Conclusion:", with: ".\nConclusion:", options: .caseInsensitive)
+        normalized = normalized.replacingOccurrences(of: " Conclusion:", with: "\nConclusion:", options: .caseInsensitive)
+        normalized = normalized.replacingOccurrences(of: ". Conclusión:", with: ".\nConclusión:", options: .caseInsensitive)
+        normalized = normalized.replacingOccurrences(of: " Conclusión:", with: "\nConclusión:", options: .caseInsensitive)
+        
         // Normalize inline bullet lists like "Practical steps: - Do X - Do Y"
         // Also handle bullet characters (• and -)
         let inlineBulletPatterns: [String] = [
@@ -373,7 +382,8 @@ struct ChatMessageView: View {
         let headingLookup: [(String, String)] = [
             ("quick context:", "Quick Context"),
             ("main answer:", "Main Answer"),
-            ("conclusion:", "Conclusion")
+            ("conclusion:", "Conclusion"),
+            ("conclusión:", "Conclusion") // Spanish version
         ]
 
         let lines = normalized.components(separatedBy: "\n")
@@ -402,8 +412,33 @@ struct ChatMessageView: View {
             if trimmed.hasPrefix("- ") || trimmed.hasPrefix("• ") {
                 flushParagraph()
                 let bulletText = trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces)
-                if !bulletText.isEmpty {
-                    segments.append(.bullet(String(bulletText)))
+                
+                // Check if bullet text contains "Conclusion:" and split it out
+                // Handle it the same way as Quick Context and Main Answer headings
+                if let conclusionRange = bulletText.range(of: "Conclusion:", options: .caseInsensitive) ??
+                    bulletText.range(of: "Conclusión:", options: .caseInsensitive) {
+                    // Split bullet text before conclusion
+                    let beforeConclusion = String(bulletText[..<conclusionRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+                    // Get text after "Conclusion:" (drop colon and space, same as heading lookup does)
+                    let afterConclusion = String(bulletText[conclusionRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                    
+                    // Add the bullet part before conclusion
+                    if !beforeConclusion.isEmpty {
+                        segments.append(.bullet(beforeConclusion))
+                    }
+                    
+                    // Add Conclusion heading (same format as Quick Context and Main Answer)
+                    segments.append(.heading("Conclusion"))
+                    
+                    // Add remainder as paragraph if present (same as heading lookup does)
+                    if !afterConclusion.isEmpty {
+                        paragraphBuffer = afterConclusion
+                    }
+                } else {
+                    // Normal bullet without conclusion
+                    if !bulletText.isEmpty {
+                        segments.append(.bullet(String(bulletText)))
+                    }
                 }
                 continue
             }

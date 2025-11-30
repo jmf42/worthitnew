@@ -38,21 +38,11 @@ class MainViewModel: ObservableObject {
     /// Tracks if the current video already displayed its decision card this session
     @Published private(set) var hasShownDecisionCardForCurrentVideo: Bool = false
 
-    // MARK: - Chapters
-    @Published var chapters: [VideoChapter] = []
-    @Published var isChaptersLoading: Bool = false
-
     @Published var qaMessages: [ChatMessage] = []
     @Published var qaInputText: String = ""
     @Published var isQaLoading: Bool = false
     @Published var shouldPresentScoreBreakdown: Bool = false
 
-    // New: Categorized comment lists for UI
-    @Published var funnyComments: [String] = []
-    @Published var insightfulComments: [String] = []
-    @Published var controversialComments: [String] = []
-    @Published var spamComments: [String] = []
-    @Published var neutralComments: [String] = []
     private var allFetchedComments: [String] = [] // Full fetched comments
     private var llmAnalyzedComments: [String] = [] // The truncated array sent to LLM (up to 50)
     @Published var suggestedQuestions: [String] = [] // From Essentials (fast analysis)
@@ -116,6 +106,59 @@ class MainViewModel: ObservableObject {
             case .dailyLimitReached: return "daily_limit"
             case .manual: return "manual"
             }
+        }
+    }
+
+    private func refreshCommentsIfStale(videoId: String, cachedAnalysis: ContentAnalysis) async {
+        let missingSummary = (cachedAnalysis.CommentssentimentSummary?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let missingThemes = (cachedAnalysis.topThemes?.isEmpty ?? true)
+        guard missingSummary && missingThemes else { return }
+
+        do {
+            let comments = try await fetchComments(videoId: videoId)
+            let classificationComments = Array(comments.prefix(commentClassificationLimit))
+            let classificationResult = try await apiManager.fetchCommentsClassification(comments: classificationComments)
+
+            let rawThemes: [CommentTheme] = (classificationResult.topThemes ?? []).map {
+                let trimmedExample = $0.exampleComment?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let clipped = String(trimmedExample.prefix(80))
+                return CommentTheme(
+                    theme: $0.theme,
+                    sentiment: $0.sentiment,
+                    sentimentScore: $0.sentimentScore,
+                    exampleComment: clipped.isEmpty ? nil : clipped
+                )
+            }
+            let validatedThemes: [CommentTheme] = rawThemes.filter { theme in
+                guard let ex = theme.exampleComment, ex.count <= 80 else { return false }
+                return classificationComments.contains { $0.contains(ex) }
+            }
+            let themesToUse = validatedThemes.isEmpty ? rawThemes : validatedThemes
+            let resolvedSpamRatio: Double? = {
+                guard let raw = classificationResult.spamRatio else { return nil }
+                return max(0.0, min(raw, 1.0))
+            }()
+
+            let updated = ContentAnalysis(
+                longSummary: cachedAnalysis.longSummary,
+                takeaways: cachedAnalysis.takeaways,
+                gemsOfWisdom: cachedAnalysis.gemsOfWisdom,
+                videoId: cachedAnalysis.videoId,
+                videoTitle: cachedAnalysis.videoTitle,
+                videoDurationSeconds: cachedAnalysis.videoDurationSeconds,
+                videoThumbnailUrl: cachedAnalysis.videoThumbnailUrl,
+                CommentssentimentSummary: classificationResult.CommentssentimentSummary,
+                topThemes: themesToUse.isEmpty ? [] : themesToUse,
+                spamRatio: resolvedSpamRatio,
+                viewerTips: MainViewModel.sanitizeTips(classificationResult.viewerTips, within: classificationComments),
+                openQuestions: MainViewModel.sanitizeOpenQuestions(classificationResult.openQuestions, within: classificationComments)
+            )
+
+            await cacheManager.saveContentAnalysis(updated, for: videoId)
+            self.analysisResult = updated
+            self.calculateAndSetWorthItScore()
+        } catch {
+            Logger.shared.warning("refreshCommentsIfStale failed for \(videoId): \(error.localizedDescription)", category: .services)
         }
     }
 
@@ -189,6 +232,104 @@ class MainViewModel: ObservableObject {
             }
         }
         return result
+    }
+
+    /// Keep only LLM outputs that literally appear in the analyzed comments, to avoid hallucinated tips/questions.
+    nonisolated private static func sanitizeTips(_ items: [String]?, within comments: [String]) -> [String]? {
+        guard let items = items else { return nil }
+        let trimmed = items
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.count <= 140 && !$0.contains("?") }
+        guard !trimmed.isEmpty else { return [] }
+
+        let bannedTokens = ["http", "www", ".com", "%", "percent", "subscribe", "coupon", "code", "book", "episode", "supplement", "offer", "off ", "thanks", "thank", "great", "awesome", "congrats", "appreciate", "love", "cool", "nice"]
+        func isPromoOrPraise(_ text: String) -> Bool {
+            let lower = text.lowercased()
+            return bannedTokens.contains { lower.contains($0) }
+        }
+
+        let filtered = trimmed.filter { tip in
+            guard !isPromoOrPraise(tip) else { return false }
+            return comments.contains { $0.contains(tip) }
+        }
+        return filtered.isEmpty ? [] : filtered
+    }
+
+    nonisolated private static func sanitizeOpenQuestions(_ items: [String]?, within comments: [String]) -> [String]? {
+        guard let items = items else { return nil }
+        let trimmed = items
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.count <= 140 && $0.contains("?") }
+        guard !trimmed.isEmpty else { return [] }
+
+        let filtered = trimmed.filter { question in
+            let lower = question.lowercased()
+            let bannedTokens = ["http", "www", ".com", "percent", "coupon", "code", "subscribe"]
+            if bannedTokens.contains(where: { lower.contains($0) }) { return false }
+            return comments.contains { $0.contains(question) }
+        }
+        return filtered.isEmpty ? [] : filtered
+    }
+
+    private func makeViewerThemes(from themes: [CommentTheme]?) -> [ViewerThemeDisplay] {
+        guard let themes, !themes.isEmpty else { return [] }
+
+        var seenKeys = Set<String>()
+        var results: [ViewerThemeDisplay] = []
+
+        for theme in themes {
+            let title = friendlyThemeTitle(theme.theme)
+            let key = title.lowercased()
+            guard !title.isEmpty, seenKeys.insert(key).inserted else { continue }
+
+            let cleanedExample: String? = {
+                guard let example = theme.exampleComment?.trimmingCharacters(in: .whitespacesAndNewlines), !example.isEmpty else { return nil }
+                let squashed = example.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                return squashed.count > 120 ? String(squashed.prefix(117)) + "..." : squashed
+            }()
+
+            let sentimentKind = viewerSentimentKind(from: theme.sentiment)
+            results.append(ViewerThemeDisplay(title: title, sentiment: sentimentKind, sentimentScore: theme.sentimentScore, example: cleanedExample))
+        }
+        return results
+    }
+
+    private func friendlyThemeTitle(_ raw: String) -> String {
+        guard !raw.isEmpty else { return raw }
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        cleaned = cleaned.replacingOccurrences(of: "_", with: " ")
+        cleaned = cleaned.replacingOccurrences(of: "-", with: " ")
+        cleaned = cleaned.replacingOccurrences(of: "([a-z])([A-Z0-9])", with: "$1 $2", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return raw }
+
+        let acronyms = ["ai", "ml", "ui", "ux", "pm"]
+        let words = cleaned.split(separator: " ").map { word -> String in
+            let lower = word.lowercased()
+            if acronyms.contains(lower) { return lower.uppercased() }
+            return lower
+        }
+        guard !words.isEmpty else { return cleaned }
+
+        var sentenceWords: [String] = []
+        for (index, word) in words.enumerated() {
+            if index == 0 {
+                sentenceWords.append(word.prefix(1).uppercased() + word.dropFirst())
+            } else {
+                sentenceWords.append(word)
+            }
+        }
+        return sentenceWords.joined(separator: " ")
+    }
+
+    private func viewerSentimentKind(from raw: String) -> ViewerThemeSentiment {
+        switch raw.lowercased() {
+        case "positive": return .positive
+        case "negative": return .negative
+        case "mixed": return .mixed
+        default: return .neutral
+        }
     }
 
     /// Evenly samples up to `limit` comments across the list to capture early, middle, and late signals.
@@ -296,6 +437,7 @@ class MainViewModel: ObservableObject {
             // Populate view model from cache
             self.analysisResult = cachedAnalysis
             self.essentialsCommentAnalysis = await cache.loadCommentInsights(for: videoId)
+            Task { await self.refreshCommentsIfStale(videoId: videoId, cachedAnalysis: cachedAnalysis) }
 
             var resolvedTranscript = await cache.loadTranscript(for: videoId)
             if resolvedTranscript == nil {
@@ -325,39 +467,6 @@ class MainViewModel: ObservableObject {
             let thumb = cachedAnalysis.videoThumbnailUrl
             self.currentVideoThumbnailURL = URL(string: (thumb?.isEmpty == false ? thumb! : fallback))
 
-            // Process categorized comments for UI
-            if let categorized = cachedAnalysis.categorizedComments {
-                let cachedComments = await cache.loadComments(for: videoId) ?? []
-                let truncated = Array(cachedComments.prefix(commentClassificationLimit))
-                self.llmAnalyzedComments = truncated
-                
-                self.funnyComments = categorized.filter { $0.category == "humor" }.compactMap { cat in
-                    let idx = cat.index - 1 // model uses 1-based indices per prompt
-                    guard idx >= 0 && idx < truncated.count else { return nil }
-                    return truncated[idx]
-                }
-                self.insightfulComments = categorized.filter { $0.category == "insightful" }.compactMap { cat in
-                    let idx = cat.index - 1
-                    guard idx >= 0 && idx < truncated.count else { return nil }
-                    return truncated[idx]
-                }
-                self.controversialComments = categorized.filter { $0.category == "controversial" }.compactMap { cat in
-                    let idx = cat.index - 1
-                    guard idx >= 0 && idx < truncated.count else { return nil }
-                    return truncated[idx]
-                }
-                self.spamComments = categorized.filter { $0.category == "spam" }.compactMap { cat in
-                    let idx = cat.index - 1
-                    guard idx >= 0 && idx < truncated.count else { return nil }
-                    return truncated[idx]
-                }
-                self.neutralComments = categorized.filter { $0.category == "neutral" }.compactMap { cat in
-                    let idx = cat.index - 1
-                    guard idx >= 0 && idx < truncated.count else { return nil }
-                    return truncated[idx]
-                }
-            }
-            
             // Restore suggested questions from essentials cache only
             if let cachedEssentials = self.essentialsCommentAnalysis {
                 self.suggestedQuestions = normalizeSuggestedQuestions(cachedEssentials.suggestedQuestions)
@@ -512,6 +621,7 @@ class MainViewModel: ObservableObject {
         // Populate view model from cache
         self.analysisResult = cachedAnalysis
         self.essentialsCommentAnalysis = await cache.loadCommentInsights(for: videoId)
+        Task { await self.refreshCommentsIfStale(videoId: videoId, cachedAnalysis: cachedAnalysis) }
 
         var resolvedTranscript = await cache.loadTranscript(for: videoId)
         if resolvedTranscript == nil {
@@ -540,38 +650,6 @@ class MainViewModel: ObservableObject {
         let fallback = "https://i.ytimg.com/vi/\(videoId)/hqdefault.jpg"
         let thumb = cachedAnalysis.videoThumbnailUrl
         self.currentVideoThumbnailURL = URL(string: (thumb?.isEmpty == false ? thumb! : fallback))
-
-        // Process categorized comments for UI using cached list
-        let cachedComments = await cache.loadComments(for: videoId) ?? []
-        let truncated = Array(cachedComments.prefix(commentClassificationLimit))
-        self.llmAnalyzedComments = truncated
-        if let categorized = cachedAnalysis.categorizedComments {
-            self.funnyComments = categorized.filter { $0.category == "humor" }.compactMap { cat in
-                let idx = cat.index - 1
-                guard idx >= 0 && idx < truncated.count else { return nil }
-                return truncated[idx]
-            }
-            self.insightfulComments = categorized.filter { $0.category == "insightful" }.compactMap { cat in
-                let idx = cat.index - 1
-                guard idx >= 0 && idx < truncated.count else { return nil }
-                return truncated[idx]
-            }
-            self.controversialComments = categorized.filter { $0.category == "controversial" }.compactMap { cat in
-                let idx = cat.index - 1
-                guard idx >= 0 && idx < truncated.count else { return nil }
-                return truncated[idx]
-            }
-            self.spamComments = categorized.filter { $0.category == "spam" }.compactMap { cat in
-                let idx = cat.index - 1
-                guard idx >= 0 && idx < truncated.count else { return nil }
-                return truncated[idx]
-            }
-            self.neutralComments = categorized.filter { $0.category == "neutral" }.compactMap { cat in
-                let idx = cat.index - 1
-                guard idx >= 0 && idx < truncated.count else { return nil }
-                return truncated[idx]
-            }
-        }
 
         // Restore suggested questions from essentials cache only
         if let cachedEssentials = self.essentialsCommentAnalysis {
@@ -625,12 +703,26 @@ class MainViewModel: ObservableObject {
                         }
                     }
 
-                    let validatedThemes: [CommentTheme] = (classificationResult?.topThemes ?? []).filter { theme in
+                    let rawThemes: [CommentTheme] = (classificationResult?.topThemes ?? []).map {
+                        let trimmedExample = $0.exampleComment?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let clipped = String(trimmedExample.prefix(80))
+                        return CommentTheme(
+                            theme: $0.theme,
+                            sentiment: $0.sentiment,
+                            sentimentScore: $0.sentimentScore,
+                            exampleComment: clipped.isEmpty ? nil : clipped
+                        )
+                    }
+                    let validatedThemes: [CommentTheme] = rawThemes.filter { theme in
                         guard let ex = theme.exampleComment, ex.count <= 80 else { return false }
                         return classificationComments.contains { $0.contains(ex) }
                     }
-                    let allowedCategories: Set<String> = ["humor","insightful","controversial","spam","neutral"]
-                    let filteredCategorized = (classificationResult?.categorizedComments ?? []).filter { allowedCategories.contains($0.category) }
+                    let resolvedSpamRatio: Double? = {
+                        guard let raw = classificationResult?.spamRatio else { return nil }
+                        return max(0.0, min(raw, 1.0))
+                    }()
+                    // Fall back to raw themes if validation trims everything, so we still render usable data
+                    let themesToUse = validatedThemes.isEmpty ? rawThemes : validatedThemes
 
                     let analysis = ContentAnalysis(
                         longSummary: transcriptResult.longSummary,
@@ -641,8 +733,10 @@ class MainViewModel: ObservableObject {
                         videoDurationSeconds: nil,
                         videoThumbnailUrl: nil,
                         CommentssentimentSummary: classificationResult?.CommentssentimentSummary,
-                        topThemes: validatedThemes.isEmpty ? [] : validatedThemes,
-                        categorizedComments: filteredCategorized
+                        topThemes: themesToUse.isEmpty ? [] : themesToUse,
+                        spamRatio: resolvedSpamRatio,
+                        viewerTips: MainViewModel.sanitizeTips(classificationResult?.viewerTips, within: classificationComments),
+                        openQuestions: MainViewModel.sanitizeOpenQuestions(classificationResult?.openQuestions, within: classificationComments)
                     )
 
                     await MainActor.run {
@@ -676,12 +770,12 @@ class MainViewModel: ObservableObject {
             self.analysisResult = contentAnalysisData
             let resolvedTitle = contentAnalysisData.videoTitle ?? titleForGpt
             self.currentVideoTitle = resolvedTitle
-            self.currentVideoThumbnailURL = URL(string: contentAnalysisData.videoThumbnailUrl ?? "https://i.ytimg.com/vi/\(videoId)/hqdefault.jpg")
-            await cache.saveContentAnalysis(contentAnalysisData, for: videoId)
+        self.currentVideoThumbnailURL = URL(string: contentAnalysisData.videoThumbnailUrl ?? "https://i.ytimg.com/vi/\(videoId)/hqdefault.jpg")
+        await cache.saveContentAnalysis(contentAnalysisData, for: videoId)
 
-            if commentClassificationFailed {
-                AnalyticsService.shared.logCommentsNotFound(videoId: videoId)
-            }
+        if commentClassificationFailed {
+            AnalyticsService.shared.logCommentsNotFound(videoId: videoId)
+        }
 
             self.essentialsCommentAnalysis = insights
             if let insights = insights { await cache.saveCommentInsights(insights, for: videoId) }
@@ -690,32 +784,9 @@ class MainViewModel: ObservableObject {
                 finalSQ = generateFallbackSuggestedQuestions(from: transcript)
             }
             self.suggestedQuestions = finalSQ
-
-            // Categorized comments mapping
-            if let categorized = contentAnalysisData.categorizedComments {
-                let truncated = classificationComments
-                self.llmAnalyzedComments = truncated
-                self.funnyComments = categorized.filter { $0.category == "humor" }.compactMap { cat in
-                    let idx = cat.index - 1; return (idx >= 0 && idx < truncated.count) ? truncated[idx] : nil
-                }
-                self.insightfulComments = categorized.filter { $0.category == "insightful" }.compactMap { cat in
-                    let idx = cat.index - 1; return (idx >= 0 && idx < truncated.count) ? truncated[idx] : nil
-                }
-                self.controversialComments = categorized.filter { $0.category == "controversial" }.compactMap { cat in
-                    let idx = cat.index - 1; return (idx >= 0 && idx < truncated.count) ? truncated[idx] : nil
-                }
-                self.spamComments = categorized.filter { $0.category == "spam" }.compactMap { cat in
-                    let idx = cat.index - 1; return (idx >= 0 && idx < truncated.count) ? truncated[idx] : nil
-                }
-                self.neutralComments = categorized.filter { $0.category == "neutral" }.compactMap { cat in
-                    let idx = cat.index - 1; return (idx >= 0 && idx < truncated.count) ? truncated[idx] : nil
-                }
-            }
-
-            // Score
         self.calculateAndSetWorthItScore()
         self.refreshDecisionCardIfPossible(videoId: videoId)
-        self.promptDecisionCardIfReady()
+            self.promptDecisionCardIfReady()
 
             // Done
             self.updateProgress(1.0, message: "Analysis Complete")
@@ -797,79 +868,51 @@ class MainViewModel: ObservableObject {
         hasShownDecisionCardForCurrentVideo = true
     }
 
-    // MARK: - Chapters
-    func loadChapters() async {
-        guard let videoId = currentVideoID else {
-            Logger.shared.warning("Cannot load chapters: no current video ID", category: .ui)
-            return
-        }
-
-        isChaptersLoading = true
-        defer { isChaptersLoading = false }
-
-        do {
-            Logger.shared.info("Loading chapters for video: \(videoId)", category: .ui)
-            let response = try await apiManager.fetchTranscriptWithSnippets(videoId: videoId)
-
-            if let snippets = response.snippets {
-                chapters = VideoChapter.createChapters(from: snippets)
-                Logger.shared.info("Loaded \(chapters.count) chapters for video: \(videoId)", category: .ui)
-            } else {
-                chapters = []
-                Logger.shared.info("No chapters available for video: \(videoId)", category: .ui)
-            }
-        } catch {
-            Logger.shared.error("Failed to load chapters for video: \(videoId)", category: .ui, error: error)
-            chapters = []
-            showFriendlyError(for: error, videoId: videoId)
-        }
-    }
-
-    func jumpToChapter(at time: Double) {
-        guard let videoId = currentVideoID else { return }
-
-        Logger.shared.info("Jumping to chapter at \(time)s for video: \(videoId)", category: .ui)
-
-        // Open YouTube at specific timestamp
-        let youtubeURL = URL(string: "https://youtube.com/watch?v=\(videoId)&t=\(Int(time))s")!
-        UIApplication.shared.open(youtubeURL)
-    }
-
     private func calculateAndSetWorthItScore() {
         let transcriptText = transcriptForAnalysis ?? rawTranscript ?? ""
         let lowTranscriptQuality = transcriptText.count < 600
-        let depthBase = lowTranscriptQuality ? 0.3 : 0.5
+        let depthBase = lowTranscriptQuality ? 0.25 : 0.4
         let depthRaw = essentialsCommentAnalysis?.contentDepthScore
         let depthNormalized = max(0.0, min(depthRaw ?? depthBase, 1.0))
         let sentimentRaw = essentialsCommentAnalysis?.overallCommentSentimentScore
         let initialCommentSentiment = max(0.0, min(sentimentRaw ?? 0.0, 1.0))
 
-        let takeaways = analysisResult?.takeaways ?? []
-        let gems = analysisResult?.gemsOfWisdom ?? []
-        var contentHighlights = uniqueNonEmpty(takeaways + gems)
+        // "Why this depth score" - ONLY transcript-based depth evidence
+        // Use depthExplanation from comment insights if available, otherwise empty
+        var contentHighlights: [String] = []
         var contentWatchouts: [String] = []
+        
+        if let depthExplanation = essentialsCommentAnalysis?.depthExplanation {
+            contentHighlights = uniqueNonEmpty(depthExplanation.strengths)
+            contentWatchouts = uniqueNonEmpty(depthExplanation.weaknesses)
+        }
 
+        // "What viewers are saying" - ONLY unique comment insights (not shown in Decision Card)
         let positiveThemes = analysisResult?.topThemes?.filter { ($0.sentimentScore ?? 0) > 0.1 }.map { $0.theme } ?? []
         let negativeThemes = analysisResult?.topThemes?.filter { ($0.sentimentScore ?? 0) < -0.1 }.map { $0.theme } ?? []
         var commentHighlights = uniqueNonEmpty(positiveThemes)
         var commentWatchouts = uniqueNonEmpty(negativeThemes)
+        let commentSummary = analysisResult?.CommentssentimentSummary?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let viewerThemes = makeViewerThemes(from: analysisResult?.topThemes)
+        let viewerTips = uniqueNonEmpty(analysisResult?.viewerTips ?? [])
+        let openQuestions = uniqueNonEmpty(analysisResult?.openQuestions ?? [])
 
+        // Add sentiment summary at the beginning if available
         if let sentimentSummary = analysisResult?.CommentssentimentSummary, !sentimentSummary.isEmpty {
             commentHighlights.insert(sentimentSummary, at: 0)
         }
-        let categorized = analysisResult?.categorizedComments ?? []
         let spamRatio: Double? = {
-            guard !categorized.isEmpty else { return nil }
-            let spamCount = categorized.filter { $0.category == "spam" }.count
-            return Double(spamCount) / Double(categorized.count)
+            if let reported = analysisResult?.spamRatio {
+                return max(0.0, min(reported, 1.0))
+            }
+            return nil
         }()
         let commentsAnalyzedCount: Int? = {
             if !llmAnalyzedComments.isEmpty { return llmAnalyzedComments.count }
-            if !categorized.isEmpty { return categorized.count }
             return analysisResult?.topThemes?.count
         }()
         let hasDepthSignal = depthRaw != nil || analysisResult != nil
-        let hasCommentSignal = sentimentRaw != nil || !(llmAnalyzedComments.isEmpty) || !categorized.isEmpty
+        let hasCommentSignal = sentimentRaw != nil || !(llmAnalyzedComments.isEmpty)
         guard hasDepthSignal || hasCommentSignal else {
             worthItScore = nil
             scoreBreakdownDetails = nil
@@ -879,66 +922,101 @@ class MainViewModel: ObservableObject {
         let commentCount = commentsAnalyzedCount ?? 0
         let spamPenaltyFactor: Double = {
             guard let ratio = spamRatio, ratio > 0.25 else { return 1.0 }
-            return 0.7
+            if ratio >= 0.5 { return 0.5 }
+            // Linearly temper between 0.25 -> 0.5 spam
+            let delta = ratio - 0.25
+            return max(0.5, 1.0 - (delta * 2.0))
         }()
-        var commentWeight = 0.35
-        if commentCount == 0 {
-            commentWeight = 0.0
-        } else if commentCount < 8 {
-            commentWeight *= 0.5
-        } else if commentCount > 20 && spamPenaltyFactor >= 0.99 {
-            commentWeight = 0.45
-        }
+
+        let commentWeight: Double = {
+            if commentCount <= 0 { return 0.0 }
+            // Smooth ramp: 0 → 0.4 over 0–30 comments
+            let clamped = min(Double(commentCount), 30.0)
+            var weight = 0.4 * (clamped / 30.0)
+            // If spam is present, scale down comment weight
+            if let ratio = spamRatio {
+                if ratio >= 0.4 { weight *= 0.4 }
+                else if ratio >= 0.25 { weight *= 0.6 }
+            }
+            return weight
+        }()
         let depthWeight = max(0.3, 1.0 - commentWeight)
         let commentSentimentNormalized = initialCommentSentiment * spamPenaltyFactor
 
         var blendedScore = (depthNormalized * depthWeight) + (commentSentimentNormalized * commentWeight)
 
-        if depthNormalized < 0.25 {
-            blendedScore = min(blendedScore, 0.55)
-        }
-        if commentSentimentNormalized < 0.30 && commentCount > 0 {
-            blendedScore = min(blendedScore, 0.50)
-        }
-        if depthNormalized > 0.8 && commentSentimentNormalized > 0.8 && commentCount > 15 && spamPenaltyFactor >= 0.99 {
-            blendedScore = min(blendedScore + 0.10, 0.95)
+        // Post-blend spread/compress to pull mids down and let highs pop
+        if blendedScore > 0.7 {
+            let excess = blendedScore - 0.7
+            blendedScore = min(0.7 + excess * 1.25, 0.98)
+        } else if blendedScore >= 0.55 {
+            let midBand = blendedScore - 0.55
+            blendedScore = 0.55 + midBand * 0.9
         }
 
-        let finalScoreValue = max(0.0, min(blendedScore, 1.0))
+        // Stricter caps for low depth; require volume + high sentiment to escape
+        if depthNormalized < 0.25 && commentSentimentNormalized < 0.30 {
+            blendedScore = min(blendedScore, 0.55)
+        } else if depthNormalized < 0.25 {
+            blendedScore = min(blendedScore, 0.60)
+        } else if depthNormalized < 0.40 {
+            if commentCount >= 15 && commentSentimentNormalized >= 0.78 {
+                blendedScore = min(blendedScore, 0.72)
+            } else {
+                blendedScore = min(blendedScore, 0.65)
+            }
+        } else if commentSentimentNormalized < 0.30 && commentCount > 0 {
+            blendedScore = min(blendedScore, 0.70)
+        }
+
+        // Synergy boost: reward videos that are strong on both depth and sentiment
+        if depthNormalized > 0.78 && commentSentimentNormalized > 0.78 && commentCount >= 12 && spamPenaltyFactor >= 0.9 {
+            let avg = (depthNormalized + commentSentimentNormalized) / 2.0
+            let boost = max(0.0, (avg - 0.78)) * 0.35 // Up to ~0.077 when avg ≈ 1.0
+            blendedScore = min(blendedScore + boost, 0.98)
+        }
+
+        var finalScoreValue = max(0.0, min(blendedScore, 1.0))
+
+        // Uncertainty tempering: small samples or spam-tempered sentiment lower the score slightly
+        if commentCount > 0 && commentCount < 8 {
+            finalScoreValue *= 0.97
+        }
+        if spamPenaltyFactor < 1.0 {
+            finalScoreValue *= 0.97
+        }
+
         let finalScorePercent = (finalScoreValue * 1000).rounded() / 10.0 // keep one decimal internally
         self.worthItScore = finalScorePercent
 
-        if let commentData = essentialsCommentAnalysis {
-            if !commentData.decisionReasons.isEmpty {
-                commentHighlights.append(contentsOf: commentData.decisionReasons)
-            }
-            if let tips = commentData.viewerTips {
-                commentHighlights.append(contentsOf: tips)
-            }
-            if !commentData.decisionLearnings.isEmpty {
-                contentHighlights.append(contentsOf: commentData.decisionLearnings)
-            }
-            if let bestMoment = commentData.decisionBestMoment, !bestMoment.isEmpty {
-                contentHighlights.append("Best moment: \(bestMoment)")
-            }
-            if let skipNote = commentData.decisionSkip, !skipNote.isEmpty {
-                contentWatchouts.append(skipNote)
-                commentWatchouts.append(skipNote)
-            }
-            if let signalQuality = commentData.signalQualityNote, !signalQuality.isEmpty {
-                commentWatchouts.append(signalQuality)
-            }
-        }
+        // Note: We intentionally do NOT add decisionReasons, decisionLearnings, decisionBestMoment,
+        // decisionSkip, signalQualityNote, or viewerTips here because:
+        // - decisionReasons: Already shown in Decision Card hero text
+        // - decisionLearnings: Already shown in Decision Card "You'll learn" section
+        // - decisionBestMoment: Already shown in Decision Card "Best part" chip
+        // - decisionSkip: Already shown in Decision Card skip note
+        // - signalQualityNote: Already shown in Decision Card comments chip
+        // - viewerTips: Not generated by current prompt (always null)
+        // These fields are used elsewhere in the UI, so we avoid duplication in score breakdown.
 
         contentHighlights = uniqueNonEmpty(contentHighlights)
         contentWatchouts = uniqueNonEmpty(contentWatchouts)
         commentHighlights = uniqueNonEmpty(commentHighlights)
         commentWatchouts = uniqueNonEmpty(commentWatchouts)
 
+        let scoreReasonLine = makeScoreReasonLine(
+            llmLine: essentialsCommentAnalysis?.scoreReasonLine,
+            depth: depthNormalized,
+            sentiment: commentSentimentNormalized,
+            hasComments: commentCount > 0,
+            spamRatio: spamRatio
+        )
+
         self.scoreBreakdownDetails = ScoreBreakdown(
             contentDepthScore: depthNormalized,
             commentSentimentScore: commentSentimentNormalized,
             hasComments: commentCount > 0,
+            scoreReasonLine: scoreReasonLine,
             contentDepthRaw: depthNormalized,
             commentSentimentRaw: sentimentRaw ?? 0.0,
             finalScore: finalScorePercent,
@@ -950,7 +1028,11 @@ class MainViewModel: ObservableObject {
             commentHighlights: commentHighlights,
             commentWatchouts: commentWatchouts,
             spamRatio: spamRatio,
-            commentsAnalyzed: commentsAnalyzedCount
+            commentsAnalyzed: commentsAnalyzedCount,
+            commentSummary: commentSummary,
+            viewerThemes: viewerThemes,
+            viewerTips: viewerTips,
+            openQuestions: openQuestions
         )
 
         Logger.shared.info("Worth-It Score calculated: \(self.worthItScore ?? -1). Depth: \(depthNormalized), Comment Sentiment: \(sentimentRaw ?? 0)", category: .services)
@@ -986,7 +1068,7 @@ class MainViewModel: ObservableObject {
 
         let commentsCount = llmAnalyzedComments.count
         let sentimentPercent = essentialsCommentAnalysis?.overallCommentSentimentScore.map { Int($0 * 100) }
-        var commentsDetail = commentsCount > 0 ? "\(commentsCount) comments analyzed" : "Comments pending"
+        var commentsDetail = commentsCount > 0 ? "\(commentsCount) comments analyzed" : "No comments yet — score based on content"
         if let sent = sentimentPercent {
             commentsDetail = "\(commentsDetail) · Sentiment \(sent)%"
         }
@@ -1021,6 +1103,7 @@ class MainViewModel: ObservableObject {
         let model = DecisionCardModel(
             title: analysis?.videoTitle ?? currentVideoTitle ?? "Video",
             reason: reasonText,
+            scoreReasonLine: scoreBreakdownDetails?.scoreReasonLine,
             score: resolvedScore,
             depthChip: depthChip,
             commentsChip: commentsChip,
@@ -1073,6 +1156,46 @@ class MainViewModel: ObservableObject {
         }
         let roundedMinutes = max(1, Int((Double(total) / 60.0).rounded()))
         return "\(roundedMinutes)m watch"
+    }
+
+    private func makeScoreReasonLine(
+        llmLine: String?,
+        depth: Double,
+        sentiment: Double,
+        hasComments: Bool,
+        spamRatio: Double?
+    ) -> String {
+        if let spam = spamRatio, spam >= 0.4 {
+            return "Score tempered by spammy comments."
+        }
+
+        if let line = llmLine?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !line.isEmpty,
+           line.count <= 90,
+           !line.contains("\n")
+        {
+            return line
+        }
+
+        if !hasComments {
+            return "Based on content depth; comments pending."
+        }
+
+        switch (depth, sentiment) {
+        case (let d, let s) where d >= 0.82 && s >= 0.82:
+            return "Highly actionable and loved by viewers."
+        case (let d, let s) where d >= 0.78 && s >= 0.65:
+            return "Deep and specific; viewers mostly positive."
+        case (let d, let s) where d >= 0.70 && s < 0.60:
+            return "Strong depth; reactions are mixed."
+        case (let d, let s) where d < 0.60 && s >= 0.78:
+            return "Light depth, carried by happy viewers."
+        case (let d, let s) where d >= 0.65 && s < 0.45:
+            return "Good depth, but comments raise concerns."
+        default:
+            return "Balanced depth and sentiment; provisional on comments."
+        }
     }
 
     private func truncateForCard(_ text: String, max: Int) -> String {
@@ -1292,12 +1415,7 @@ class MainViewModel: ObservableObject {
         cleanedTranscriptForLLM = nil
         hasShownDecisionCardForCurrentVideo = false
 
-        // Clear categorized comments
-        funnyComments = []
-        insightfulComments = []
-        controversialComments = []
-        spamComments = []
-        neutralComments = []
+        // Clear comment caches
         allFetchedComments = []
         llmAnalyzedComments = []
         

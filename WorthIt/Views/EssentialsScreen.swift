@@ -3,8 +3,6 @@ import UIKit
 
 struct EssentialsScreen: View {
     @EnvironmentObject var viewModel: MainViewModel
-    @State private var selectedCategory: CommentCategory? = nil
-    @State private var isShowingCategorySheet: Bool = false
     @State private var isLongSummaryExpanded: Bool = false
 
     var body: some View {
@@ -21,12 +19,14 @@ struct EssentialsScreen: View {
                         gemsSection(gems: gems)
                     }
 
-                    // Chapters section
-                    if !viewModel.chapters.isEmpty || viewModel.isChaptersLoading {
-                        chaptersSection()
+                    let tips = (analysis.viewerTips ?? []).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    let openQuestions = (analysis.openQuestions ?? []).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    let hasSummary = !(analysis.CommentssentimentSummary?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                    let hasThemes = !(analysis.topThemes?.isEmpty ?? true)
+                    let hasCommentContent = hasSummary || !tips.isEmpty || !openQuestions.isEmpty || hasThemes
+                    if hasCommentContent {
+                        CommunityNarrativeView(analysis: analysis)
                     }
-
-                    CommunityNarrativeView(analysis: analysis, selectedCategory: $selectedCategory, isShowingCategorySheet: $isShowingCategorySheet)
                 } else {
                     // Show proper app sections with clear loading messages
                     loadingSection()
@@ -47,41 +47,11 @@ struct EssentialsScreen: View {
             Logger.shared.debug("EssentialsScreen appeared.", category: .ui)
             // Pin navigation to Essentials so background tasks don't kick us away
             viewModel.currentScreenOverride = .showingEssentials
-
-            // Load chapters if not already loaded
-            if viewModel.chapters.isEmpty && !viewModel.isChaptersLoading {
-                Task {
-                    await viewModel.loadChapters()
-                }
-            }
         }
         .onDisappear { if viewModel.currentScreenOverride == .showingEssentials { viewModel.currentScreenOverride = nil } }
-        // Present category details as a sheet to avoid nested navigation bars and duplicate Back buttons
-        .sheet(isPresented: Binding<Bool>(
-            get: { selectedCategory != nil && isShowingCategorySheet },
-            set: { show in if !show { selectedCategory = nil; isShowingCategorySheet = false } }
-        )) {
-            if let category = selectedCategory {
-                CategorizedCommentDetailSheet(
-                    category: category,
-                    comments: commentsForCategory(category),
-                    onClose: { selectedCategory = nil; isShowingCategorySheet = false }
-                )
-            }
-        }
     }
 
     // Comments-only UI removed per product decision
-
-    private func commentsForCategory(_ category: CommentCategory) -> [String] {
-        switch category {
-        case .funny: return viewModel.funnyComments
-        case .insightful: return viewModel.insightfulComments
-        case .controversial: return viewModel.controversialComments
-        case .spam: return viewModel.spamComments
-        case .neutral: return viewModel.neutralComments
-        }
-    }
 
     @ViewBuilder
     private func loadingPlaceholder(text: String) -> some View {
@@ -268,14 +238,6 @@ struct EssentialsScreen: View {
                     gemsSkeleton()
                 }
             }
-
-            // Comments classification with loading message; always aligned to 30 comments
-            SectionView(title: "Comments Classification", icon: "slider.horizontal.3") {
-                VStack(alignment: .leading, spacing: 14) {
-                    loadingPlaceholder(text: "Analyzing 30 top comments…")
-                    commentsClassificationSkeleton()
-                }
-            }
         }
     }
 
@@ -315,25 +277,6 @@ struct EssentialsScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             bar(width: 200)
             bar(width: 180)
-        }
-        .redacted(reason: .placeholder)
-        .modifier(Shimmer())
-    }
-
-    @ViewBuilder
-    private func commentsClassificationSkeleton() -> some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
-        LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(0..<6, id: \.self) { _ in
-                VStack(spacing: 6) {
-                    bar(width: 40, height: 10)
-                    bar(width: 120, height: 10, opacity: 0.35)
-                }
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, minHeight: 72)
-                .background(Theme.Color.sectionBackground.opacity(0.9))
-                .cornerRadius(12)
-            }
         }
         .redacted(reason: .placeholder)
         .modifier(Shimmer())
@@ -397,25 +340,6 @@ struct EssentialsScreen: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    @ViewBuilder
-    private func chaptersSection() -> some View {
-        SectionView(title: "Chapters", icon: "list.bullet.rectangle") {
-            if viewModel.isChaptersLoading {
-                ProgressView()
-                    .tint(Theme.Color.accent)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 20)
-            } else {
-                ChaptersView(
-                    chapters: viewModel.chapters,
-                    onChapterTap: { startTime in
-                        viewModel.jumpToChapter(at: startTime)
-                    }
-                )
-            }
         }
     }
 
@@ -486,7 +410,7 @@ private func parseLongSummary(_ text: String) -> (highlights: [String], narrativ
     // If the narrative is one long line, add breaks after sentence enders to create paragraphs
     if !narrative.contains("\n") {
         // Split into sentences and group them into paragraphs
-        var sentences = narrative
+        let sentences = narrative
             .components(separatedBy: ". ")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -707,36 +631,16 @@ private extension View {
     }
 }
 
-enum CommentCategory: String, Hashable {
-    case funny = "😂 Funny"
-    case insightful = "💡 Insightful"
-    case controversial = "🔥 Controversial"
-    case spam = "🗑️ Spam"
-    case neutral = "🤷‍♂️ Neutral"
-
-    var apiKey: String {
-        switch self {
-        case .funny: return "funniest"
-        case .insightful: return "most_insightful"
-        case .controversial: return "most_controversial"
-        case .spam: return "spam"
-        case .neutral: return "neutral"
-        }
-    }
-}
-
 struct CommunityNarrativeView: View {
     let analysis: ContentAnalysis
-    @EnvironmentObject var viewModel: MainViewModel
-    @Binding var selectedCategory: CommentCategory?
-    @Binding var isShowingCategorySheet: Bool
+    @State private var showAllThemes: Bool = false
 
     var body: some View {
-        SectionView(title: "Community Compass", icon: "compass.drawing") {
+        SectionView(title: "What Viewers Are Saying", icon: "quote.bubble.fill") {
             VStack(alignment: .leading, spacing: 20) {
                 if let CommentssentimentSummary = analysis.CommentssentimentSummary, !CommentssentimentSummary.isEmpty {
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "sparkle")
+                        Image(systemName: "quote.bubble")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(Theme.Color.accent)
                             .offset(y: 3) // Adjust vertically to align with text
@@ -748,144 +652,151 @@ struct CommunityNarrativeView: View {
                     }
                 }
 
+                // Scope / trust context
+                HStack(spacing: 10) {
+                    Text("From top comments")
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(Theme.Color.sectionBackground.opacity(0.7))
+                        )
+                    if let spamRatio = analysis.spamRatio {
+                        CommunityHealthRow(spamRatio: spamRatio)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                let tips = (analysis.viewerTips ?? []).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                let openQuestions = (analysis.openQuestions ?? []).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                if !tips.isEmpty {
+                    ChipRow(title: "What viewers suggest", items: Array(tips.prefix(2)), style: .accent, icon: "lightbulb")
+                }
+                if !openQuestions.isEmpty {
+                    ChipRow(title: "Open questions", items: Array(openQuestions.prefix(2)), style: .secondary, icon: "questionmark.circle")
+                }
+
                 if let themes = analysis.topThemes, !themes.isEmpty {
-                    Text("Comments Themes")
+                    let hasMultipleStances = Set(themes.map { $0.sentiment.lowercased() }).count > 1
+                    Text("Themes from comments")
                         .font(Theme.Font.subheadlineBold)
                         .foregroundColor(Theme.Color.secondaryText)
+                    let renderedThemes = showAllThemes ? themes : Array(themes.prefix(3))
                     VStack(spacing: 10) {
-                        ForEach(Array(themes.prefix(3)), id: \.theme) { theme in
-                            CommentThemeRow(theme: theme)
+                        ForEach(renderedThemes, id: \.theme) { theme in
+                            CommentThemeRow(theme: theme, showStance: hasMultipleStances)
                         }
                     }
-                }
-
-                Divider()
-
-                // --- Unified Categorized Comments Section ---
-                Text("Comments classification")
-                    .font(Theme.Font.subheadlineBold)
-                    .foregroundColor(Theme.Color.secondaryText)
-                    .padding(.bottom, 2)
-                let allCategories: [(CommentCategory, [String])] = [
-                    (.funny, viewModel.funnyComments),
-                    (.insightful, viewModel.insightfulComments),
-                    (.controversial, viewModel.controversialComments),
-                    (.spam, viewModel.spamComments),
-                    (.neutral, viewModel.neutralComments)
-                ].filter { !$0.1.isEmpty }
-
-                if !allCategories.isEmpty {
-                    let totalComments = allCategories.reduce(0) { $0 + $1.1.count }
-                    // Horizontal rows to match CommentThemeRow style
-                    LazyVStack(spacing: 10) {
-                        ForEach(allCategories, id: \.0) { (category, comments) in
-                            UnifiedCategoryButton(
-                                category: category,
-                                comments: comments,
-                                totalComments: totalComments,
-                                selectedCategory: Binding(
-                                    get: { selectedCategory },
-                                    set: { newVal in
-                                        selectedCategory = newVal
-                                        if newVal != nil { isShowingCategorySheet = true }
-                                    }
-                                )
+                    if themes.count > 3 {
+                        Button(action: { showAllThemes.toggle() }) {
+                            HStack(spacing: 6) {
+                                Text(showAllThemes ? "Show fewer themes" : "View more themes")
+                                    .font(Theme.Font.captionBold)
+                                Image(systemName: showAllThemes ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(Theme.Color.secondaryText)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            .background(
+                                Capsule().fill(Theme.Color.sectionBackground.opacity(0.75))
                             )
                         }
+                        .buttonStyle(.plain)
                     }
-                    .frame(maxWidth: .infinity)
                 } else {
-                    Text("No categorized comments were found.")
+                    Text("Not enough distinct themes yet.")
                         .font(Theme.Font.body)
                         .foregroundColor(Theme.Color.secondaryText)
-                        .padding()
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private func sentimentBadge(for theme: CommentTheme) -> some View {
-        let sentiment = theme.sentiment.lowercased()
-        let (symbol, color): (String, Color) = {
-            if sentiment.contains("positive") {
-                return ("+", .green)
-            } else if sentiment.contains("negative") {
-                return ("-", .red)
-            } else {
-                return ("•", .gray)
-            }
-        }()
-        Text(symbol)
-            .font(.system(size: 20, weight: .bold, design: .rounded))
-            .foregroundColor(color)
-            .frame(width: 28, height: 28)
-            .background(color.opacity(0.13))
-            .clipShape(Circle())
-            .accessibilityLabel(sentiment.capitalized)
-    }
-}
+    private struct CommunityHealthRow: View {
+        let spamRatio: Double
 
-struct UnifiedCategoryButton: View {
-    let category: CommentCategory
-    let comments: [String]
-    let totalComments: Int
-    @Binding var selectedCategory: CommentCategory?
+        private var display: (text: String, color: Color, icon: String) {
+            if spamRatio <= 0.1 { return ("Low spam", Theme.Color.success, "checkmark.shield.fill") }
+            if spamRatio <= 0.25 { return ("Some spam present", Theme.Color.warning, "exclamationmark.triangle.fill") }
+            return ("Spam-heavy — caution", Theme.Color.error, "xmark.shield.fill")
+        }
 
-    private var percentage: String {
-        guard totalComments > 0 else { return "0%" }
-        let value = Double(comments.count) / Double(totalComments) * 100
-        return String(format: "%.0f%%", value)
-    }
-
-    var body: some View {
-        Button(action: { selectedCategory = category }) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(category.rawValue)
-                        .font(Theme.Font.body.weight(.semibold))
-                        .foregroundColor(Theme.Color.primaryText)
-                    Text("Tap to view")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
-                }
-                Spacer()
-                Text(percentage)
-                    .font(Theme.Font.captionBold)
-                    .foregroundColor(Theme.Color.primaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule().fill(Theme.Color.sectionBackground.opacity(0.9))
-                    )
-                    .overlay(
-                        Capsule().stroke(Theme.Color.accent.opacity(0.18), lineWidth: 1)
-                    )
-                Image(systemName: "chevron.right")
+        var body: some View {
+            HStack(spacing: 8) {
+                Image(systemName: display.icon)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Theme.Color.secondaryText)
+                    .foregroundColor(display.color)
+                Text(display.text)
+                    .font(Theme.Font.captionBold)
+                    .foregroundColor(display.color)
+                Spacer()
             }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 56)
-            .background(Theme.Color.sectionBackground.opacity(0.95))
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Theme.Color.accent.opacity(0.12), lineWidth: 1)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(display.color.opacity(0.12))
             )
-            .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
         }
-        .buttonStyle(.plain)
     }
-}
 
-// (Removed old CommentDetailView that depended on SpotlightComment)
+    private enum ChipRowStyle {
+        case accent
+        case secondary
+    }
+
+    private struct ChipRow: View {
+        let title: String
+        let items: [String]
+        let style: ChipRowStyle
+        let icon: String
+
+        private var tint: Color {
+            switch style {
+            case .accent: return Theme.Color.accent
+            case .secondary: return Theme.Color.secondaryText
+            }
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(Theme.Font.subheadlineBold)
+                    .foregroundColor(Theme.Color.secondaryText)
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(items, id: \.self) { item in
+                        HStack(spacing: 6) {
+                            Image(systemName: icon)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(tint)
+                            Text(item)
+                                .font(Theme.Font.caption)
+                                .foregroundColor(Theme.Color.primaryText)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule().fill(tint.opacity(0.12))
+                        )
+                        .overlay(
+                            Capsule().stroke(tint.opacity(0.18), lineWidth: 1)
+                        )
+                        .copyContext(item)
+                    }
+                }
+            }
+        }
+    }
+
+}
 
 // Elegant theme list row
 private struct CommentThemeRow: View {
     let theme: CommentTheme
-    
+    let showStance: Bool
+
     private var sentimentInfo: (String, Color) {
         let s = theme.sentiment.lowercased()
         if s.contains("positive") { return ("hand.thumbsup.fill", Theme.Color.success) }
@@ -893,7 +804,15 @@ private struct CommentThemeRow: View {
         if s.contains("mixed") { return ("circle.lefthalf.filled", Theme.Color.warning) }
         return ("circle", Theme.Color.secondaryText)
     }
-    
+
+    private var stanceTag: (String, Color) {
+        let s = theme.sentiment.lowercased()
+        if s.contains("positive") { return ("Praise", Theme.Color.success) }
+        if s.contains("negative") { return ("Concern", Theme.Color.error) }
+        if s.contains("mixed") { return ("Mixed", Theme.Color.warning) }
+        return ("Neutral", Theme.Color.secondaryText)
+    }
+
     @State private var showCopyConfirmation: Bool = false
 
     var body: some View {
@@ -902,14 +821,37 @@ private struct CommentThemeRow: View {
                 .foregroundColor(sentimentInfo.1)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 4) {
-                Text(theme.theme.replacingOccurrences(of: "_", with: " "))
+                Text(theme.theme.replacingOccurrences(of: "_", with: " ").capitalized)
                     .font(Theme.Font.body.weight(.semibold))
                     .foregroundColor(Theme.Color.primaryText)
+                HStack(spacing: 6) {
+                    if showStance {
+                        Text(stanceTag.0)
+                            .font(Theme.Font.captionBold)
+                            .foregroundColor(stanceTag.1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule().fill(stanceTag.1.opacity(0.14))
+                            )
+                            .overlay(
+                                Capsule().stroke(stanceTag.1.opacity(0.2), lineWidth: 1)
+                            )
+                    }
+                }
                 if let example = theme.exampleComment, !example.isEmpty {
                     Text(example)
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.Color.secondaryText)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .onTapGesture {
+                            UIPasteboard.general.string = example
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            withAnimation(.easeInOut(duration: 0.2)) { showCopyConfirmation = true }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                withAnimation(.easeInOut(duration: 0.2)) { showCopyConfirmation = false }
+                            }
+                        }
                 }
             }
             Spacer()
@@ -964,113 +906,6 @@ private struct CommentThemeRow: View {
     }
 }
 
-// Add a new view for showing all comments in a category
-struct CategorizedCommentDetailSheet: View {
-    let category: CommentCategory
-    let comments: [String]
-    var onClose: () -> Void
-
-    private var categoryColor: Color {
-        switch category {
-        case .funny: return Theme.Color.orange
-        case .insightful: return Theme.Color.accent
-        case .controversial: return Theme.Color.warning
-        case .spam: return Theme.Color.error
-        case .neutral: return Theme.Color.secondaryText
-        }
-    }
-
-    var body: some View {
-        ZStack {
-            Theme.Color.darkBackground.ignoresSafeArea()
-            Theme.Gradient.subtleGlow.opacity(0.25).ignoresSafeArea()
-
-            VStack(spacing: 16) {
-                // Header
-                HStack {
-                    Text(category.rawValue)
-                        .font(Theme.Font.title3.weight(.bold))
-                        .foregroundStyle(Theme.Gradient.brand())
-                    Spacer()
-                    Button(action: onClose) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.top, 8)
-
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(comments, id: \.self) { comment in
-                            CommentCard(text: comment, accent: categoryColor)
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 18)
-                }
-            }
-        }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
-    }
-}
-
-private struct CommentCard: View {
-    let text: String
-    let accent: Color
-    @State private var showCopyConfirmation: Bool = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(accent.opacity(0.85))
-                .frame(width: 4)
-
-            Text(text)
-                .font(Theme.Font.body)
-                .foregroundColor(Theme.Color.primaryText)
-                .multilineTextAlignment(.leading)
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Theme.Color.sectionBackground.opacity(0.9))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Theme.Color.accent.opacity(0.12), lineWidth: 1)
-                )
-        )
-        .contextMenu {
-            Button {
-                UIPasteboard.general.string = text
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                withAnimation(.easeInOut(duration: 0.2)) { showCopyConfirmation = true }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                    withAnimation(.easeInOut(duration: 0.2)) { showCopyConfirmation = false }
-                }
-            } label: {
-                Label("Copy", systemImage: "doc.on.doc")
-            }
-        }
-        .overlay(
-            GeometryReader { geo in
-                Text("Copied")
-                    .font(Theme.Font.captionBold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.75))
-                    .clipShape(Capsule())
-                    .position(x: geo.size.width / 2, y: -6)
-                    .opacity(showCopyConfirmation ? 1 : 0)
-                    .allowsHitTesting(false)
-            }
-        )
-    }
-}
-
 #if DEBUG
 struct EssentialsScreen_Previews: PreviewProvider {
     static var previews: some View {
@@ -1093,16 +928,11 @@ struct EssentialsScreen_Previews: PreviewProvider {
             videoDurationSeconds: 1200,
             videoThumbnailUrl: "",
             CommentssentimentSummary: "The community is generally excited and optimistic.",
-            topThemes: [CommentTheme(theme: "Great Editing", sentiment: "Positive", sentimentScore: 0.9, exampleComment: "The editing was top-notch!")]
+            topThemes: [CommentTheme(theme: "Great Editing", sentiment: "Positive", sentimentScore: 0.9, exampleComment: "The editing was top-notch!")],
+            spamRatio: 0.08,
+            viewerTips: ["Watch at 1.25x to keep pacing tight."],
+            openQuestions: ["Will there be a follow-up covering hands-on examples?"]
         )
-
-        // Add sample chapters
-        let sampleSnippets = [
-            TranscriptSnippet(text: "Introduction to AI in art", start: 0.0, duration: 45.2),
-            TranscriptSnippet(text: "How AI is changing music production", start: 45.2, duration: 67.8),
-            TranscriptSnippet(text: "Ethical considerations and future implications", start: 113.0, duration: 52.4)
-        ]
-        viewModelWithData.chapters = VideoChapter.createChapters(from: sampleSnippets)
         
         return EssentialsScreen()
             .environmentObject(viewModelWithData)

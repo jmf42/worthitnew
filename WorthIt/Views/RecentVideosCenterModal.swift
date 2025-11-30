@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Recent Videos Center Modal (no database)
 struct RecentVideosCenterModal: View {
@@ -22,7 +23,7 @@ struct RecentVideosCenterModal: View {
         self.initialItems = initialItems
         self.borderGradient = borderGradient
     }
-
+    
     // MARK: - Sort & Stats helpers
     private enum SortOption: String, CaseIterable, Identifiable {
         case recent = "Most Recent"
@@ -89,40 +90,58 @@ struct RecentVideosCenterModal: View {
     }
 
     var body: some View {
-        NavigationView {
+        VStack(spacing: 0) {
+            // Custom navigation bar - completely outside iOS toolbar system
+            customNavigationBar
+            
             ScrollView(showsIndicators: false) {
                 cardContent
                     .padding(.horizontal, 12)
                     .padding(.top, 12)
                     .padding(.bottom, 24)
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    WorthItToolbarTitle()
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        onDismiss()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("Back")
-                                .font(Theme.Font.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                        }
-                        .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
-                    }
-                }
-            }
-            .navigationBarBackButtonHidden(true)
-            .onAppear {
-                loadItems()
-            }
         }
+        .background(Theme.Color.darkBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
+        .onAppear {
+            loadItems()
+        }
+    }
+    
+    private var customNavigationBar: some View {
+        ZStack {
+            // Center: Title
+            WorthItToolbarTitle()
+            
+            // Left: Back button
+            HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Back")
+                        .font(Theme.Font.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(borderGradient.opacity(0.7), lineWidth: 0.9)
+                )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onDismiss()
+                }
+                
+                Spacer()
+            }
+            .padding(.leading, 16)
+        }
+        .frame(height: 44)
+        .padding(.top, 4)
     }
 
     private var cardContent: some View {
@@ -353,20 +372,14 @@ struct RecentVideosCenterModal: View {
     }
 
     private func infoSection(title: String, formattedDate: String) -> some View {
-        let resolvedTitle = title.isEmpty ? "Untitled insight" : title
-
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .center, spacing: 0) {
             Text(formattedDate)
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.Color.secondaryText.opacity(0.8))
                 .lineLimit(1)
-            Text(resolvedTitle)
-                .font(Theme.Font.subheadlineBold)
-                .foregroundColor(Theme.Color.primaryText)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .layoutPriority(1)
+                .multilineTextAlignment(.center)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var navigationChevron: some View {
@@ -397,15 +410,28 @@ struct RecentVideosCenterModal: View {
     private func scoreBadge(for score: Double) -> some View {
         let clampedScore = max(0, min(score, 100))
         let formattedScore = "\(Int(clampedScore))%"
+        let fillPercentage = clampedScore / 100.0
 
         return ZStack {
+            // Background circle
             Circle()
                 .fill(Theme.Color.sectionBackground.opacity(0.75))
                 .shadow(color: Theme.Color.accent.opacity(0.2), radius: 6, y: 2)
-
+            
+            // Empty stroke (background for the filled portion)
             Circle()
-                .strokeBorder(scoreGradient(for: clampedScore), lineWidth: 2)
-
+                .stroke(Theme.Color.sectionBackground.opacity(0.3), lineWidth: 3)
+            
+            // Filled portion based on percentage
+            Circle()
+                .trim(from: 0, to: CGFloat(fillPercentage))
+                .stroke(
+                    scoreGradient(for: clampedScore),
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                )
+                .rotationEffect(Angle(degrees: -90))
+            
+            // Percentage text
             Text(formattedScore)
                 .font(Theme.Font.subheadline.weight(.bold))
                 .foregroundColor(.white)

@@ -267,7 +267,7 @@ struct InitialScreen: View {
                 // or when full analysis is available.
                 let canOpenEssentials = (viewModel.worthItScore != nil) || (viewModel.analysisResult != nil)
                 StyledOptionButton(
-                    title: "Essentials",
+                    title: "Atomic insights",
                     subtitle: "Get key points quickly",
                     icon: "sparkles",
                     iconColor: .white,
@@ -411,6 +411,15 @@ struct ScoreBreakdownCardView: View {
                         }
                         .padding(.top, 2)
 
+                        if let reason = breakdown.scoreReasonLine, !reason.isEmpty {
+                            Text(reason)
+                                .font(Theme.Font.subheadline)
+                                .foregroundColor(Theme.Color.primaryText)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.9)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
                         // Subtle gradient divider under header for structure
                         Rectangle()
                             .fill(Theme.Gradient.appBluePurple.opacity(0.25))
@@ -453,32 +462,33 @@ struct ScoreBreakdownCardView: View {
                                 )
                             }
                             
-                            BreakdownReasonSection(
-                                title: "What viewers are saying",
-                                positives: breakdown.commentHighlights,
-                                negatives: breakdown.commentWatchouts,
-                                positiveIcon: "hand.thumbsup.fill",
-                                negativeIcon: "xmark.octagon.fill",
-                                positiveColor: Theme.Color.success,
-                                negativeColor: Theme.Color.error,
-                                maxItems: 2
-                            )
+                            ViewerSentimentSection(breakdown: breakdown)
                             
                             if let analyzed = breakdown.commentsAnalyzed, analyzed > 0 {
-                                Text("Based on \(analyzed) recent comments")
+                                let spamText: String = {
+                                    guard let ratio = breakdown.spamRatio else { return "" }
+                                    let percent = Int(max(0, min(ratio, 1.0)) * 100)
+                                    return " · \(percent)% spam filtered"
+                                }()
+                                Text("Based on \(analyzed) recent comments\(spamText)")
                                     .font(Theme.Font.caption)
                                     .foregroundColor(Theme.Color.secondaryText)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         } else {
-                            HStack {
-                                Image(systemName: "text.bubble.fill")
-                                    .foregroundColor(Theme.Color.secondaryText)
-                                Text("No comments available for analysis.")
-                                    .font(Theme.Font.subheadline)
-                                    .foregroundColor(Theme.Color.secondaryText)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "text.bubble.fill")
+                                        .foregroundColor(Theme.Color.secondaryText)
+                                    Text("No comments yet — score leans on content depth.")
+                                        .font(Theme.Font.subheadline)
+                                        .foregroundColor(Theme.Color.secondaryText)
+                                }
+                                Text("We’ll update the sentiment view as comments arrive.")
+                                    .font(Theme.Font.caption)
+                                    .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
                             }
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 10)
                         }
 
                         // (Removed theme chips to ensure consistent look before/after cache)
@@ -639,6 +649,119 @@ struct BreakdownReasonSection: View {
     }
 }
 
+struct ViewerSentimentSection: View {
+    let breakdown: ScoreBreakdown
+
+    private var summaryText: String? {
+        if let summary = breakdown.commentSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+            return summary
+        }
+        return breakdown.commentHighlights.first
+    }
+
+    private var themesToShow: [ViewerThemeDisplay] {
+        if !breakdown.viewerThemes.isEmpty { return Array(breakdown.viewerThemes.prefix(3)) }
+
+        var fallbacks: [ViewerThemeDisplay] = []
+        for title in breakdown.commentHighlights {
+            fallbacks.append(ViewerThemeDisplay(title: title, sentiment: .positive, sentimentScore: nil, example: nil))
+        }
+        for title in breakdown.commentWatchouts {
+            fallbacks.append(ViewerThemeDisplay(title: title, sentiment: .negative, sentimentScore: nil, example: nil))
+        }
+        return Array(fallbacks.prefix(3))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WHAT VIEWERS ARE SAYING")
+                .font(Theme.Font.captionBold)
+                .foregroundColor(Theme.Color.secondaryText)
+                .kerning(0.4)
+
+            if let summary = summaryText {
+                Text(summary)
+                    .font(Theme.Font.footnote)
+                    .foregroundColor(Theme.Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Theme.Color.sectionBackground.opacity(0.35))
+                    )
+            }
+
+            if !themesToShow.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(themesToShow) { theme in
+                        ViewerThemeRow(theme: theme)
+                    }
+                }
+                .padding(.top, summaryText == nil ? 0 : 4)
+            }
+
+            if !breakdown.viewerTips.isEmpty {
+                ThemePillsView(title: "Viewer tips", themes: Array(breakdown.viewerTips.prefix(2)), color: Theme.Color.accent, icon: "lightbulb")
+                    .padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 4)
+    }
+}
+
+struct ViewerThemeRow: View {
+    let theme: ViewerThemeDisplay
+
+    private var iconAndColor: (String, Color) {
+        switch theme.sentiment {
+        case .positive:
+            return ("hand.thumbsup.fill", Theme.Color.success)
+        case .negative:
+            return ("xmark.octagon.fill", Theme.Color.error)
+        case .mixed:
+            return ("exclamationmark.triangle.fill", Theme.Color.warning)
+        case .neutral:
+            return ("minus.circle.fill", Theme.Color.secondaryText)
+        }
+    }
+
+    var body: some View {
+        let (icon, color) = iconAndColor
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(color)
+                    .padding(6)
+                    .background(color.opacity(0.1))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(theme.title)
+                        .font(Theme.Font.subheadlineBold)
+                        .foregroundColor(Theme.Color.primaryText)
+
+                    if let example = theme.example, !example.isEmpty {
+                        Text("\"\(example)\"")
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.Color.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.Color.sectionBackground.opacity(0.4))
+        )
+    }
+}
+
 struct ReasonRow: View {
     let icon: String
     let text: String
@@ -656,7 +779,6 @@ struct ReasonRow: View {
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.Color.primaryText)
                 .multilineTextAlignment(.leading)
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -807,6 +929,7 @@ struct InitialScreen_Previews: PreviewProvider {
             contentDepthScore: 0.85,
             commentSentimentScore: 0.92,
             hasComments: true,
+            scoreReasonLine: "Highly actionable and loved by viewers.",
             contentDepthRaw: 0.87,
             commentSentimentRaw: 0.55,
             finalScore: 88,
@@ -818,7 +941,15 @@ struct InitialScreen_Previews: PreviewProvider {
             commentHighlights: ["42% rave about the live prompt demos.", "Viewers say it finally shows practical workflows."],
             commentWatchouts: ["Some think the sponsor plug drags on."],
             spamRatio: 0.08,
-            commentsAnalyzed: 42
+            commentsAnalyzed: 42,
+            commentSummary: "Viewers are upbeat about the creativity walkthroughs, with some asking for clearer pricing and job impact details.",
+            viewerThemes: [
+                ViewerThemeDisplay(title: "AI impact on jobs", sentiment: .negative, sentimentScore: -0.6, example: "We have a grave situation ahead."),
+                ViewerThemeDisplay(title: "Personal growth skills", sentiment: .positive, sentimentScore: 0.55, example: "Surviving and thriving won't be about competing with AI."),
+                ViewerThemeDisplay(title: "Need for guidance", sentiment: .mixed, sentimentScore: 0.0, example: "Some hype about solutions, others want concrete steps.")
+            ],
+            viewerTips: ["Focus on creativity and judgment.", "Build AI fluency with small daily reps."],
+            openQuestions: ["Should I switch to engineering?", "How many people can master both?"]
         )
 
         return InitialScreen()

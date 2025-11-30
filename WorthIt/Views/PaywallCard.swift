@@ -428,10 +428,13 @@ struct PaywallCard: View {
                     if let trailing = plan.trailingBadge {
                         Text(trailing)
                             .font(Theme.Font.captionBold)
-                            .foregroundColor(Theme.Color.accent)
+                            .foregroundColor(.white)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(Capsule().fill(Theme.Color.accent.opacity(0.18)))
+                            .background(
+                                Capsule()
+                                    .fill(Theme.Gradient.appBluePurple)
+                            )
                     }
                 }
 
@@ -477,37 +480,20 @@ struct PaywallCard: View {
     }
 
     private func priceLabel(for plan: PaywallPlanOption, loaded: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Group {
-                if loaded {
-                    Text(plan.priceText)
-                } else if plan.product == nil, plan.priceText.lowercased() != "loading…" {
-                    Text(plan.priceText)
-                        .foregroundColor(Theme.Color.secondaryText)
-                } else {
-                    Text(plan.placeholderPrice)
-                        .redacted(reason: .placeholder)
-                }
-            }
-            .font(Theme.Font.title3.weight(.bold))
-            .foregroundColor(Theme.Color.primaryText)
-            .animation(.easeInOut(duration: 0.2), value: loaded)
-            
-            // Show savings comparison for annual plan
-            if plan.id == AppConstants.subscriptionProductAnnualID,
-               let savingsAmount = annualSavingsAmount,
-               let savingsPercent = annualSavingsPercent,
-               loaded {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Save \(savingsAmount)/year")
-                        .font(Theme.Font.caption.weight(.semibold))
-                        .foregroundColor(Theme.Color.accent)
-                    Text("vs \(weeklyProduct?.displayPrice ?? "$2.99")/week")
-                        .font(Theme.Font.caption2)
-                        .foregroundColor(Theme.Color.secondaryText)
-                }
+        Group {
+            if loaded {
+                Text(plan.priceText)
+            } else if plan.product == nil, plan.priceText.lowercased() != "loading…" {
+                Text(plan.priceText)
+                    .foregroundColor(Theme.Color.secondaryText)
+            } else {
+                Text(plan.placeholderPrice)
+                    .redacted(reason: .placeholder)
             }
         }
+        .font(Theme.Font.title3.weight(.bold))
+        .foregroundColor(Theme.Color.primaryText)
+        .animation(.easeInOut(duration: 0.2), value: loaded)
     }
 
     private var primaryButtonSkeleton: some View {

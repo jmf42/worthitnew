@@ -15,5 +15,5 @@ COPY static ./static
 # Cloud Run escucha en 8080
 EXPOSE 8080
 
-# Arranque con Gunicorn -> main:app
-CMD ["gunicorn", "-b", "0.0.0.0:8080", "main:app", "--workers", "2", "--timeout", "120"]
+# Start Gunicorn pointing at Flask app in app.py
+CMD ["gunicorn", "-b", "0.0.0.0:8080", "app:app", "--workers", "2", "--timeout", "120"]

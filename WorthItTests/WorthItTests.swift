@@ -142,12 +142,16 @@ struct WorthItTests {
             "overallCommentSentimentScore": 0.75,
             "contentDepthScore": 0.85,
             "suggestedQuestions": ["What is this about?", "How does it work?"],
-            "contentHighlights": ["Explains the 3-step system"],
-            "contentGaps": ["No pricing guidance"],
-            "commentHighlights": ["Fans love the pacing"],
-            "commentWarnings": ["Some say it's rushed"],
-            "spamRatio": 0.15,
-            "commentsAnalyzed": 40
+            "decisionVerdict": "Worth it",
+            "decisionReasons": ["Great content with actionable steps"],
+            "decisionLearnings": ["Learn the 5-step framework"],
+            "decisionBestMoment": "03:45 — The framework reveal",
+            "decisionSkip": null,
+            "signalQualityNote": "25 comments, low spam",
+            "depthExplanation": {
+                "strengths": ["Includes 5-step framework with examples", "Explains trade-offs between methods"],
+                "weaknesses": ["60% sponsor segments, minimal how-to"]
+            }
         }
         """
         
@@ -160,12 +164,12 @@ struct WorthItTests {
             #expect(insights.overallCommentSentimentScore == 0.75)
             #expect(insights.contentDepthScore == 0.85)
             #expect(insights.suggestedQuestions.count == 2)
-            #expect(insights.contentHighlights == ["Explains the 3-step system"])
-            #expect(insights.contentGaps == ["No pricing guidance"])
-            #expect(insights.commentHighlights == ["Fans love the pacing"])
-            #expect(insights.commentWarnings == ["Some say it's rushed"])
-            #expect(insights.spamRatio == 0.15)
-            #expect(insights.commentsAnalyzed == 40)
+            #expect(insights.decisionVerdict == "Worth it")
+            #expect(insights.decisionReasons.count == 1)
+            #expect(insights.decisionLearnings.count == 1)
+            #expect(insights.depthExplanation != nil)
+            #expect(insights.depthExplanation?.strengths.count == 2)
+            #expect(insights.depthExplanation?.weaknesses.count == 1)
         } catch {
             #expect(false, "Failed to decode CommentInsights: \(error)")
         }
@@ -184,6 +188,7 @@ struct WorthItTests {
             contentDepthScore: 0.8,
             commentSentimentScore: 0.7,
             hasComments: true,
+            scoreReasonLine: "Highly actionable and loved by viewers.",
             contentDepthRaw: 0.8,
             commentSentimentRaw: 0.7,
             finalScore: 75,
@@ -195,7 +200,14 @@ struct WorthItTests {
             commentHighlights: ["Viewers like the tone"],
             commentWatchouts: ["Too many tangents"],
             spamRatio: 0.2,
-            commentsAnalyzed: 15
+            commentsAnalyzed: 15,
+            commentSummary: "Viewers mostly positive but note pacing issues.",
+            viewerThemes: [
+                ViewerThemeDisplay(title: "Clarity", sentiment: .positive, sentimentScore: 0.5, example: "Very clear instructions."),
+                ViewerThemeDisplay(title: "Pacing", sentiment: .negative, sentimentScore: -0.3, example: "Too slow in the middle.")
+            ],
+            viewerTips: ["Increase playback speed."],
+            openQuestions: ["Will there be a follow-up?"]
         )
         
         #expect(breakdown.contentDepthScore == 0.8)
@@ -209,6 +221,11 @@ struct WorthItTests {
         #expect(breakdown.commentWatchouts.count == 1)
         #expect(breakdown.spamRatio == 0.2)
         #expect(breakdown.commentsAnalyzed == 15)
+        #expect(breakdown.commentSummary == "Viewers mostly positive but note pacing issues.")
+        #expect(breakdown.viewerThemes.count == 2)
+        #expect(breakdown.viewerTips.count == 1)
+        #expect(breakdown.openQuestions.count == 1)
+        #expect(breakdown.scoreReasonLine == "Highly actionable and loved by viewers.")
     }
     
     // MARK: - String Extensions Tests

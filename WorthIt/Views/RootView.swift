@@ -43,6 +43,8 @@ struct RootView: View {
             state.backgroundImagePositionAdjustment = .zero
             // Critical: Set backgroundColor to clear to remove the grey capsule
             state.titleTextAttributes[.backgroundColor] = UIColor.clear
+            // Ensure no default tint/shadow from UIKit
+            state.titlePositionAdjustment = .zero
         }
         
         stripBackground(clearButtonAppearance.normal)
@@ -202,7 +204,10 @@ struct RootView: View {
     }
 
     private var mainNavigationView: some View {
-        NavigationView {
+        VStack(spacing: 0) {
+            // Custom navigation bar - completely outside iOS toolbar system
+            customNavigationBar
+            
             ZStack {
                 backgroundLayer
                 activeScreen
@@ -211,12 +216,9 @@ struct RootView: View {
                 decisionCardOverlay
                 paywallOverlay
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { toolbarContent() }
-            .navigationBarBackButtonHidden(true)
-            .preferredColorScheme(.dark)
         }
-        .navigationViewStyle(.stack)
+        .background(Theme.Color.darkBackground.ignoresSafeArea())
+        .preferredColorScheme(.dark)
         .sheet(isPresented: $showRecentSheet) {
             RecentVideosCenterModal(
                 onDismiss: { showRecentSheet = false },
@@ -313,18 +315,23 @@ struct RootView: View {
 
     @ViewBuilder
     private var errorOverlay: some View {
-        if let _ = viewModel.userFriendlyError {
+        if let error = viewModel.userFriendlyError {
+            let canRetry = error.canRetry
             FocusErrorModalView(
                 title: "We Couldn't Pull This Transcript",
-                message: "YouTube isn't sharing a transcript for this video right now. Try a different video or check back in a bit.",
-                primaryActionTitle: "Try Another Video",
+                message: error.message,
+                primaryActionTitle: canRetry ? "Try Again" : "Try Another Video",
                 primaryAction: {
-                    viewModel.clearCurrentError()
-                    if isRunningInExtension {
-                        Logger.shared.info("Error modal primary action inside Share Extension. Dismissing.", category: .ui)
-                        NotificationCenter.default.post(name: .shareExtensionShouldDismissGlobal, object: nil)
+                    if canRetry {
+                        viewModel.retryLastFailedAnalysis()
                     } else {
-                        viewModel.goToHome()
+                        viewModel.clearCurrentError()
+                        if isRunningInExtension {
+                            Logger.shared.info("Error modal primary action inside Share Extension. Dismissing.", category: .ui)
+                            NotificationCenter.default.post(name: .shareExtensionShouldDismissGlobal, object: nil)
+                        } else {
+                            viewModel.goToHome()
+                        }
                     }
                 },
                 dismissAction: {
@@ -507,13 +514,15 @@ struct RootView: View {
     @ViewBuilder
     private func identityBox() -> some View {
         standardBox {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: 16) {
                 Image("AppLogo")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 56, height: 56)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                    .padding(.leading, 4)
+                
                 VStack(alignment: .leading, spacing: 6) {
                     Text("WorthIt")
                         .font(Theme.Font.title3.weight(.bold))
@@ -736,24 +745,19 @@ struct RootView: View {
         }
     }
 
-    @ToolbarContentBuilder
-    private func toolbarContent() -> some ToolbarContent {
-        ToolbarItem(placement: .principal) {
+    // Custom navigation bar that bypasses iOS toolbar system completely
+    @ViewBuilder
+    private var customNavigationBar: some View {
+        ZStack {
+            // Center: Title
             WorthItToolbarTitle(
                 opacity: viewModel.viewState == .idle ? 0.0 : (viewModel.viewState == .processing ? 0.7 : 1.0)
             )
             .animation(.easeInOut, value: viewModel.viewState)
-        }
-        // Hide Back on initial options when running inside the Share Extension
-        if viewModel.viewState == .showingEssentials || viewModel.viewState == .showingAskAnything || (viewModel.viewState == .showingInitialOptions && !isRunningInExtension) {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    if viewModel.viewState == .showingInitialOptions {
-                        viewModel.goToHome()
-                    } else {
-                        viewModel.returnToInitialOptions()
-                    }
-                } label: {
+            
+            // Left: Back button (when applicable)
+            HStack {
+                if viewModel.viewState == .showingEssentials || viewModel.viewState == .showingAskAnything || (viewModel.viewState == .showingInitialOptions && !isRunningInExtension) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 14, weight: .semibold))
@@ -763,12 +767,48 @@ struct RootView: View {
                             .minimumScaleFactor(0.8)
                     }
                     .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(standardBorderGradient.opacity(0.7), lineWidth: 0.9)
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        if viewModel.viewState == .showingInitialOptions {
+                            viewModel.goToHome()
+                        } else {
+                            viewModel.returnToInitialOptions()
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
                 }
-                .transition(.opacity.combined(with: .move(edge: .leading)))
+                
+                Spacer()
+                
+                // Right: Close button (Share Extension only)
+                if isRunningInExtension {
+                    Image(systemName: "xmark.circle.fill")
+                        .imageScale(.large)
+                        .foregroundColor(Theme.Color.secondaryText.opacity(0.8))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            Logger.shared.info("Close button tapped. Posting dismiss notification.", category: .ui)
+                            NotificationCenter.default.post(name: .shareExtensionShouldDismissGlobal, object: nil)
+                        }
+                }
             }
+            .padding(.horizontal, 16)
         }
+        .frame(height: 44)
+    }
+    
+    @ToolbarContentBuilder
+    private func toolbarContent() -> some ToolbarContent {
+        // Empty toolbar - we use customNavigationBar instead
         // Show the close button only when running inside the Share Extension
-        if isRunningInExtension {
+        if isRunningInExtension && false { // Disabled - handled by customNavigationBar
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     Logger.shared.info("Close button tapped. Posting dismiss notification.", category: .ui)
@@ -1354,13 +1394,13 @@ struct OnboardingView: View {
             ),
             OnboardingSlide(
                 id: 1,
-                eyebrow: "Score · Essentials · Sentiment",
+                eyebrow: "Score · Atomic insights · Sentiment",
                 title: "Value first, video later",
-                detail: "Score, essentials, and sentiment show what to watch.",
+                detail: "Score, atomic insights, and sentiment show what to watch.",
                 caption: nil,
                 cards: [
                     OnboardingCard(icon: "gauge.medium", title: "WorthIt score decoded", description: "Instant 0–100 depth read.", action: .none),
-                    OnboardingCard(icon: "list.bullet.rectangle", title: "Essentials on autopilot", description: "Storyline, highlights, and chapters for you.", action: .none),
+                    OnboardingCard(icon: "list.bullet.rectangle", title: "Atomic insights on autopilot", description: "Storyline, highlights, and chapters for you.", action: .none),
                     OnboardingCard(icon: "bubble.left.and.bubble.right.fill", title: "Community vibe check", description: "Comment sentiment in one glance.", action: .none)
                 ]
             ),
@@ -1756,6 +1796,7 @@ struct RootView_Previews: PreviewProvider {
                 contentDepthScore: 0.75,
                 commentSentimentScore: 0.82,
                 hasComments: true,
+                scoreReasonLine: "Deep and specific; viewers mostly positive.",
                 contentDepthRaw: 0.77,
                 commentSentimentRaw: 0.40,
                 finalScore: 78,
@@ -1767,7 +1808,15 @@ struct RootView_Previews: PreviewProvider {
                 commentHighlights: ["Fans love the clear metrics section."],
                 commentWatchouts: ["Some say it repeats earlier content."],
                 spamRatio: 0.12,
-                commentsAnalyzed: 24
+                commentsAnalyzed: 24,
+                commentSummary: "Viewers love the pace but call out a few repeated points.",
+                viewerThemes: [
+                    ViewerThemeDisplay(title: "Practical steps", sentiment: .positive, sentimentScore: 0.7, example: "Clear metrics and examples."),
+                    ViewerThemeDisplay(title: "Job impact", sentiment: .negative, sentimentScore: -0.5, example: "What about layoffs from this?"),
+                    ViewerThemeDisplay(title: "More guidance", sentiment: .mixed, sentimentScore: 0.1, example: "Wants deeper how-to steps.")
+                ],
+                viewerTips: ["Watch at 1.25x to keep pacing tight."],
+                openQuestions: ["Will there be a follow-up covering hands-on examples?"]
             )
 // If a production fallback is needed, use the following:
 // vm.analysisResult = ContentAnalysis(
@@ -1792,6 +1841,7 @@ struct RootView_Previews: PreviewProvider {
                 viewerTips: ["Keep captions on for faster skim."],
                 overallCommentSentimentScore: 0.6,
                 contentDepthScore: 0.7,
+                scoreReasonLine: "Deep and specific; viewers mostly positive.",
                 suggestedQuestions: ["Best first step?", "Tools needed?", "Pitfalls to avoid?"]
             )
         }

@@ -30,20 +30,24 @@ struct WorthItToolbarTitle: View {
 struct RecentVideosHeaderLabel: View {
     var body: some View {
         HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Theme.Gradient.appBluePurple)
-                    .frame(width: 52, height: 52)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
-                            .shadow(color: Theme.Color.accent.opacity(0.45), radius: 12, y: 6)
-                    )
+            HStack {
+                ZStack {
+                    Circle()
+                        .fill(Theme.Gradient.appBluePurple)
+                        .frame(width: 45, height: 45)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                                .shadow(color: Theme.Color.accent.opacity(0.45), radius: 12, y: 6)
+                        )
 
-                Image(systemName: "play.rectangle.fill")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundColor(.white)
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                Spacer()
             }
+            .frame(width: 45)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Recent Videos")
@@ -245,96 +249,6 @@ extension View {
     func enableSwipeBack() -> some View {
         // Provide an empty view behind to avoid layout conflicts
         self.modifier(SwipeBackModifier(previousScreen: AnyView(EmptyView())))
-    }
-}
-
-// MARK: - Chapters Components
-struct ChaptersView: View {
-    let chapters: [VideoChapter]
-    let onChapterTap: (Double) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Image(systemName: "list.bullet.rectangle")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(Theme.Color.accent)
-                Text("Chapters")
-                    .font(Theme.Font.headline)
-                    .foregroundColor(Theme.Color.primaryText)
-            }
-
-            if chapters.isEmpty {
-                Text("No chapters available")
-                    .font(Theme.Font.body)
-                    .foregroundColor(Theme.Color.secondaryText)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 20)
-            } else {
-                VStack(spacing: 12) {
-                    ForEach(chapters) { chapter in
-                        ChapterRow(
-                            chapter: chapter,
-                            onTap: { onChapterTap(chapter.startTime) }
-                        )
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 8)
-    }
-}
-
-struct ChapterRow: View {
-    let chapter: VideoChapter
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                // Timestamp badge
-                Text(chapter.timestampString)
-                    .font(.system(.subheadline, design: .monospaced))
-                    .fontWeight(.semibold)
-                    .foregroundColor(Theme.Color.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(Theme.Color.accent.opacity(0.15))
-                    )
-
-                // Title and duration
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(chapter.title)
-                        .font(Theme.Font.subheadlineBold)
-                        .foregroundColor(Theme.Color.primaryText)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-
-                    Text(String(format: "%.1fs", chapter.duration))
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
-                }
-
-                Spacer()
-
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(Theme.Color.accent)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Theme.Color.primaryText.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Theme.Color.primaryText.opacity(0.1), lineWidth: 1)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
     }
 }
 

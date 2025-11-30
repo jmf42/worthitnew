@@ -2,8 +2,6 @@ import SwiftUI
 
 // MARK: - Decision Card
 struct DecisionCardView: View {
-    @EnvironmentObject var viewModel: MainViewModel
-
     let model: DecisionCardModel
     let onPrimaryAction: () -> Void
     let onSecondaryAction: () -> Void
@@ -11,7 +9,6 @@ struct DecisionCardView: View {
     let onBestMoment: (() -> Void)?
 
     @State private var animateIn = false
-    @State private var showGaugeBreakdown = false
     @State private var gaugeAnimationCompleted = false
     @State private var highlightPulse = false
 
@@ -35,7 +32,7 @@ struct DecisionCardView: View {
             // 1. Hero Section: Verdict Badge, Score & Reason (compact)
             heroSection
                 .padding(.horizontal, 20) // Wider text area
-                .padding(.top, 16) // Uniform spacing from top border
+                .padding(.top, 24) // Increased spacing from top border
             
             // 3. Insights: Compact Learnings
             if !model.learnings.isEmpty {
@@ -48,7 +45,7 @@ struct DecisionCardView: View {
             footerButtons
                 .padding(.horizontal, 20) // Align with rest
                 .padding(.top, 20) // Balanced separation
-                .padding(.bottom, 16) // Matches top spacing
+                .padding(.bottom, 24) // Increased bottom spacing
         }
         .frame(maxWidth: 500) // Constrain width on iPad
         .background(liquidGlassBackground)
@@ -186,7 +183,7 @@ struct DecisionCardView: View {
         }
         .buttonStyle(.plain)
     }
-
+    
     // MARK: - 2. Hero Section (Compact)
     private var heroSection: some View {
         VStack(spacing: 0) { // Tighter control
@@ -232,17 +229,24 @@ struct DecisionCardView: View {
                 ScoreGaugeView(
                     score: model.score ?? 0,
                     isLoading: false,
-                    showBreakdown: $showGaugeBreakdown,
+                    showBreakdown: .constant(false),
                     isAnimationCompleted: $gaugeAnimationCompleted
                 )
                 .frame(width: 72, height: 72) // Slightly smaller (was 80)
-                .onTapGesture {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    viewModel.requestScoreBreakdownPresentation()
-                    onClose() // Close card when opening breakdown
-                }
+                .accessibilityHint("Worth-It score display")
             }
+            .frame(maxWidth: .infinity)
             .padding(.bottom, 16) // Spacing to hero text
+
+            if let scoreReasonLine = model.scoreReasonLine, !scoreReasonLine.isEmpty {
+                Text(scoreReasonLine)
+                    .font(Theme.Font.subheadline)
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.95))
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 10)
+            }
 
             // Hero Reason - Stable, properly aligned formatting
             Text(model.reason)

@@ -72,13 +72,23 @@ final class StartOptionsViewModel: ObservableObject {
             return
         }
         let metadataURL = canonicalYouTubeURL(from: url) ?? url
+        
+        // Extract video ID for thumbnail fetching
+        guard let videoId = try? URLParser.extractVideoID(from: url) else {
+            previewData = nil
+            return
+        }
+        
         previewTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
+            
+            // Fetch title first
+            var title = ""
             let metadata = await fetchLPMetadata(for: metadataURL)
             if Task.isCancelled { return }
-
-            var title = metadata?.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            
+            title = metadata?.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if title.isEmpty, let fallbackTitle = await fetchYouTubeOEmbedTitle(for: metadataURL) {
                 title = fallbackTitle
             }
@@ -86,17 +96,47 @@ final class StartOptionsViewModel: ObservableObject {
             if title.isEmpty {
                 title = metadataURL.host ?? "YouTube video"
             }
-
+            
+            // Fetch YouTube thumbnail directly
             var image: UIImage?
-            if let provider = metadata?.iconProvider {
-                image = try? await provider.loadImage()
+            let thumbnailURLs = [
+                "https://i.ytimg.com/vi/\(videoId)/maxresdefault.jpg",
+                "https://i.ytimg.com/vi/\(videoId)/hq720.jpg",
+                "https://i.ytimg.com/vi/\(videoId)/sddefault.jpg",
+                "https://i.ytimg.com/vi/\(videoId)/hqdefault.jpg"
+            ]
+            
+            // Try to fetch thumbnail from YouTube
+            for thumbnailURLString in thumbnailURLs {
+                if Task.isCancelled { break }
+                guard let thumbnailURL = URL(string: thumbnailURLString) else { continue }
+                
+                do {
+                    let (data, response) = try await URLSession.shared.data(from: thumbnailURL)
+                    if let httpResponse = response as? HTTPURLResponse,
+                       httpResponse.statusCode == 200,
+                       let thumbnailImage = UIImage(data: data) {
+                        image = thumbnailImage
+                        break
+                    }
+                } catch {
+                    continue
+                }
             }
-            if Task.isCancelled { return }
-            if image == nil, let provider = metadata?.imageProvider {
-                image = try? await provider.loadImage()
+            
+            // Fallback to LinkPresentation metadata if YouTube thumbnail failed
+            if image == nil {
+                if let provider = metadata?.imageProvider {
+                    image = try? await provider.loadImage()
+                }
+                if Task.isCancelled { return }
+                if image == nil, let provider = metadata?.iconProvider {
+                    image = try? await provider.loadImage()
+                }
             }
+            
             await MainActor.run {
-                previewData = TinyPreviewData(title: title, image: image)
+                previewData = TinyPreviewData(title: title, image: image, videoId: videoId)
             }
         }
     }
@@ -205,9 +245,10 @@ struct StartOptionsView: View {
                 howItWorksSection
                     .padding(.top, 6)
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     Image(systemName: "list.bullet")
                         .foregroundColor(Theme.Color.accent)
+                        .font(.system(size: 16, weight: .semibold))
                     Text("See how")
                         .font(Theme.Font.subheadline)
                         .foregroundColor(Theme.Color.secondaryText.opacity(0.92))
@@ -230,10 +271,21 @@ struct StartOptionsView: View {
 
     private var startHeader: some View {
         HStack(spacing: 16) {
-            startPowerBadge
-            Text("Start here")
-                .font(Theme.Font.title3.weight(.bold))
-                .foregroundColor(Theme.Color.primaryText)
+            HStack {
+                startPowerBadge
+                Spacer()
+            }
+            .frame(width: 45)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Start here")
+                    .font(Theme.Font.title3.weight(.bold))
+                    .foregroundColor(Theme.Color.primaryText)
+                
+                Text("Paste a link or share from YouTube")
+                    .font(Theme.Font.subheadline)
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.92))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -242,7 +294,7 @@ struct StartOptionsView: View {
         ZStack {
             Circle()
                 .fill(Theme.Gradient.appBluePurple)
-                .frame(width: 52, height: 52)
+                .frame(width: 45, height: 45)
                 .overlay(
                     Circle()
                         .stroke(Color.white.opacity(0.28), lineWidth: 1)
@@ -250,7 +302,7 @@ struct StartOptionsView: View {
                 .shadow(color: Theme.Color.accent.opacity(0.08), radius: 4, y: 2)
 
             Image(systemName: "power")
-                .font(.system(size: 24, weight: .heavy))
+                .font(.system(size: 19, weight: .semibold))
                 .foregroundColor(.white)
         }
     }
@@ -583,44 +635,66 @@ private struct StepGuideRow: View {
 struct TinyPreviewData {
     let title: String
     let image: UIImage?
+    let videoId: String?
+    
+    init(title: String, image: UIImage?, videoId: String? = nil) {
+        self.title = title
+        self.image = image
+        self.videoId = videoId
+    }
 }
 
 struct TinyLinkPreview: View {
     let preview: TinyPreviewData
 
     var body: some View {
-        HStack(spacing: 10) {
-            Group {
-                if let img = preview.image {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Image(systemName: "link.circle.fill")
-                        .resizable()
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundColor(Theme.Color.secondaryText)
+        Button(action: {}) {
+            HStack(spacing: 12) {
+                // Thumbnail
+                Group {
+                    if let img = preview.image {
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        // Placeholder while loading
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Theme.Color.sectionBackground.opacity(0.5))
+                            .overlay(
+                                Image(systemName: "play.rectangle.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(Theme.Color.secondaryText.opacity(0.6))
+                            )
+                    }
                 }
-            }
-            .frame(width: 32, height: 32)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+                .frame(width: 64, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                )
 
-            Text(preview.title)
-                .font(Theme.Font.subheadline)
-                .foregroundColor(Theme.Color.primaryText)
-                .lineLimit(1)
-            Spacer()
+                Text(preview.title)
+                    .font(Theme.Font.subheadline)
+                    .foregroundColor(Theme.Color.primaryText)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Theme.Color.sectionBackground.opacity(0.7))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
+            )
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Theme.Color.sectionBackground.opacity(0.7))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Theme.Color.accent.opacity(0.15), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
     }
 }
 

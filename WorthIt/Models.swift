@@ -71,13 +71,15 @@ struct ContentAnalysis: Codable, Identifiable {
     let videoThumbnailUrl: String?
     let CommentssentimentSummary: String?
     let topThemes: [CommentTheme]?
-    let categorizedComments: [CategorizedCommentAI]?
+    let spamRatio: Double?
+    let viewerTips: [String]?
+    let openQuestions: [String]?
 
     enum CodingKeys: String, CodingKey {
         case longSummary, takeaways, gemsOfWisdom
         case videoId, videoTitle, videoDurationSeconds, videoThumbnailUrl
         case CommentssentimentSummary, topThemes
-        case categorizedComments
+        case spamRatio, viewerTips, openQuestions
     }
 
     init(from decoder: Decoder) throws {
@@ -105,7 +107,9 @@ struct ContentAnalysis: Codable, Identifiable {
         videoThumbnailUrl = try container.decodeIfPresent(String.self, forKey: .videoThumbnailUrl)
         CommentssentimentSummary = try container.decodeIfPresent(String.self, forKey: .CommentssentimentSummary)
         topThemes = try container.decodeIfPresent([CommentTheme].self, forKey: .topThemes)
-        categorizedComments = try container.decodeIfPresent([CategorizedCommentAI].self, forKey: .categorizedComments)
+        spamRatio = try container.decodeIfPresentLossyDouble(forKey: .spamRatio)
+        viewerTips = try? container.decodeIfPresent([String].self, forKey: .viewerTips)
+        openQuestions = try? container.decodeIfPresent([String].self, forKey: .openQuestions)
     }
 
     // Convenience initializer for SwiftUI previews & tests
@@ -123,7 +127,9 @@ struct ContentAnalysis: Codable, Identifiable {
         self.videoThumbnailUrl = nil
         self.CommentssentimentSummary = nil
         self.topThemes = nil
-        self.categorizedComments = nil
+        self.spamRatio = nil
+        self.viewerTips = nil
+        self.openQuestions = nil
     }
 
     /// Full member‑wise initializer for situations (like `.placeholder()`) that need to set more fields.
@@ -137,8 +143,9 @@ struct ContentAnalysis: Codable, Identifiable {
         videoThumbnailUrl: String? = nil,
         CommentssentimentSummary: String? = nil,
         topThemes: [CommentTheme]? = nil,
-        categorizedComments: [CategorizedCommentAI]? = nil,
-        
+        spamRatio: Double? = nil,
+        viewerTips: [String]? = nil,
+        openQuestions: [String]? = nil
     ) {
         self.longSummary = longSummary
         self.takeaways = takeaways
@@ -149,7 +156,9 @@ struct ContentAnalysis: Codable, Identifiable {
         self.videoThumbnailUrl = videoThumbnailUrl
         self.CommentssentimentSummary = CommentssentimentSummary
         self.topThemes = topThemes
-        self.categorizedComments = categorizedComments
+        self.spamRatio = spamRatio
+        self.viewerTips = viewerTips
+        self.openQuestions = openQuestions
     }
 
     func encode(to encoder: Encoder) throws {
@@ -163,35 +172,9 @@ struct ContentAnalysis: Codable, Identifiable {
         try container.encodeIfPresent(videoThumbnailUrl, forKey: .videoThumbnailUrl)
         try container.encodeIfPresent(CommentssentimentSummary, forKey: .CommentssentimentSummary)
         try container.encodeIfPresent(topThemes, forKey: .topThemes)
-        try container.encodeIfPresent(categorizedComments, forKey: .categorizedComments)
-    }
-}
-
-// New struct for AI's categorized comment response
-struct CategorizedCommentAI: Codable {
-    let index: Int // Index of the comment in the input array
-    let category: String // One of: humor, insightful, controversial, spam, neutral
-
-    private enum CodingKeys: String, CodingKey { case index, category }
-
-    init(index: Int, category: String) {
-        self.index = index
-        let allowed = ["humor", "insightful", "controversial", "spam", "neutral"]
-        let normalized = category.lowercased()
-        self.category = allowed.contains(normalized) ? normalized : "neutral"
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        let idx = try c.decode(Int.self, forKey: .index)
-        let raw = (try? c.decode(String.self, forKey: .category)) ?? "neutral"
-        self.init(index: idx, category: raw)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(index, forKey: .index)
-        try c.encode(category, forKey: .category)
+        try container.encodeIfPresent(spamRatio, forKey: .spamRatio)
+        try container.encodeIfPresent(viewerTips, forKey: .viewerTips)
+        try container.encodeIfPresent(openQuestions, forKey: .openQuestions)
     }
 }
 
@@ -210,6 +193,7 @@ struct CommentInsights: Codable, Identifiable {
     // Fast metrics
     let overallCommentSentimentScore: Double?
     let contentDepthScore: Double?
+    let scoreReasonLine: String?
 
     // ALWAYS present after the intro call
     let suggestedQuestions: [String]
@@ -221,11 +205,15 @@ struct CommentInsights: Codable, Identifiable {
     let decisionBestMoment: String?
     let decisionSkip: String?
     let signalQualityNote: String?
+    
+    // Depth explanation for score breakdown
+    let depthExplanation: DepthExplanation?
 
     enum CodingKeys: String, CodingKey {
         case videoId, viewerTips
-        case overallCommentSentimentScore, contentDepthScore, suggestedQuestions
+        case overallCommentSentimentScore, contentDepthScore, scoreReasonLine, suggestedQuestions
         case decisionVerdict, decisionReasons, decisionLearnings, decisionBestMoment, decisionSkip, signalQualityNote
+        case depthExplanation
     }
 
     init(from decoder: Decoder) throws {
@@ -234,6 +222,7 @@ struct CommentInsights: Codable, Identifiable {
         viewerTips                  = try c.decodeIfPresent([String].self,        forKey: .viewerTips)
         overallCommentSentimentScore = try c.decodeIfPresent(Double.self, forKey: .overallCommentSentimentScore)
         contentDepthScore            = try c.decodeIfPresent(Double.self, forKey: .contentDepthScore)
+        scoreReasonLine              = try c.decodeIfPresent(String.self, forKey: .scoreReasonLine)
         // Ensure we always have a questions array
         suggestedQuestions = (try? c.decode([String].self, forKey: .suggestedQuestions)) ?? []
         decisionVerdict = try c.decodeIfPresent(String.self, forKey: .decisionVerdict)
@@ -242,6 +231,7 @@ struct CommentInsights: Codable, Identifiable {
         decisionBestMoment = try c.decodeIfPresent(String.self, forKey: .decisionBestMoment)
         decisionSkip = try c.decodeIfPresent(String.self, forKey: .decisionSkip)
         signalQualityNote = try c.decodeIfPresent(String.self, forKey: .signalQualityNote)
+        depthExplanation = try c.decodeIfPresent(DepthExplanation.self, forKey: .depthExplanation)
     }
 
     // Convenience member‑wise init for previews / tests
@@ -250,18 +240,21 @@ struct CommentInsights: Codable, Identifiable {
         viewerTips: [String]? = nil,
         overallCommentSentimentScore: Double? = nil,
         contentDepthScore: Double? = nil,
+        scoreReasonLine: String? = nil,
         suggestedQuestions: [String] = [],
         decisionVerdict: String? = nil,
         decisionReasons: [String] = [],
         decisionLearnings: [String] = [],
         decisionBestMoment: String? = nil,
         decisionSkip: String? = nil,
-        signalQualityNote: String? = nil
+        signalQualityNote: String? = nil,
+        depthExplanation: DepthExplanation? = nil
     ) {
         self.videoId = videoId
         self.viewerTips = viewerTips
         self.overallCommentSentimentScore = overallCommentSentimentScore
         self.contentDepthScore = contentDepthScore
+        self.scoreReasonLine = scoreReasonLine
         self.suggestedQuestions = suggestedQuestions
         self.decisionVerdict = decisionVerdict
         self.decisionReasons = decisionReasons
@@ -269,7 +262,14 @@ struct CommentInsights: Codable, Identifiable {
         self.decisionBestMoment = decisionBestMoment
         self.decisionSkip = decisionSkip
         self.signalQualityNote = signalQualityNote
+        self.depthExplanation = depthExplanation
     }
+}
+
+/// Depth explanation for score breakdown
+struct DepthExplanation: Codable {
+    let strengths: [String]
+    let weaknesses: [String]
 }
 
 /// Alias so legacy code can still refer to EssentialsCommentAnalysis
@@ -301,6 +301,21 @@ struct CommentTheme: Codable, Identifiable, Hashable {
     }
 }
 
+enum ViewerThemeSentiment: String, Hashable {
+    case positive
+    case negative
+    case mixed
+    case neutral
+}
+
+struct ViewerThemeDisplay: Identifiable, Hashable {
+    let id = UUID()
+    let title: String
+    let sentiment: ViewerThemeSentiment
+    let sentimentScore: Double?
+    let example: String?
+}
+
 struct ChatMessage: Identifiable, Equatable, Hashable, Codable {
     let id: UUID
     let content: String
@@ -320,6 +335,7 @@ struct ScoreBreakdown: Identifiable {
     let contentDepthScore: Double
     let commentSentimentScore: Double
     let hasComments: Bool // New property
+    let scoreReasonLine: String?
     let contentDepthRaw: Double
     let commentSentimentRaw: Double
     let finalScore: Double
@@ -332,6 +348,10 @@ struct ScoreBreakdown: Identifiable {
     let commentWatchouts: [String]
     let spamRatio: Double?
     let commentsAnalyzed: Int?
+    let commentSummary: String?
+    let viewerThemes: [ViewerThemeDisplay]
+    let viewerTips: [String]
+    let openQuestions: [String]
 }
 
 // MARK: - View State Enum
@@ -351,6 +371,7 @@ enum ViewState: Equatable {
 struct DecisionCardModel: Equatable {
     let title: String
     let reason: String
+    let scoreReasonLine: String?
     let score: Double?
     let depthChip: DecisionProofChip
     let commentsChip: DecisionProofChip
@@ -436,83 +457,6 @@ extension Error {
 struct BackendTranscriptResponse: Codable {
     let video_id: String? // Make optional if backend might omit
     let text: String?     // Make optional
-}
-
-struct TranscriptSnippet: Codable, Identifiable {
-    let id = UUID()
-    let text: String
-    let start: Double
-    let duration: Double
-
-    enum CodingKeys: String, CodingKey {
-        case text, start, duration
-    }
-}
-
-struct BackendTranscriptWithSnippetsResponse: Codable {
-    let video_id: String?
-    let text: String?
-    let language: TranscriptLanguage?
-    let tracks: [String]?
-    let snippets: [TranscriptSnippet]?
-
-    struct TranscriptLanguage: Codable {
-        let code: String
-        let label: String
-        let is_generated: Bool
-    }
-}
-
-// MARK: - Chapter Models
-struct VideoChapter: Identifiable, Equatable {
-    let id = UUID()
-    let title: String
-    let startTime: Double
-    let duration: Double
-    let timestampString: String
-
-    init(snippet: TranscriptSnippet) {
-        self.title = snippet.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.startTime = snippet.start
-        self.duration = snippet.duration
-
-        // Format timestamp as MM:SS
-        let minutes = Int(startTime) / 60
-        let seconds = Int(startTime) % 60
-        self.timestampString = String(format: "%d:%02d", minutes, seconds)
-    }
-
-    static func createChapters(from snippets: [TranscriptSnippet]?) -> [VideoChapter] {
-        guard let snippets = snippets, !snippets.isEmpty else { return [] }
-
-        // Group snippets into logical chapters (3-7 chapters max)
-        let totalSnippets = snippets.count
-        let targetChapterCount = min(max(totalSnippets / 3, 3), 7)
-
-        // Calculate chapter size
-        let chapterSize = max(totalSnippets / targetChapterCount, 1)
-
-        var chapters: [VideoChapter] = []
-        var currentSnippetIndex = 0
-
-        while currentSnippetIndex < totalSnippets && chapters.count < targetChapterCount {
-            let endIndex = min(currentSnippetIndex + chapterSize, totalSnippets)
-            let chapterSnippets = Array(snippets[currentSnippetIndex..<endIndex])
-
-            // Combine snippets for this chapter
-            let combinedText = chapterSnippets.map { $0.text }.joined(separator: " ")
-            let startTime = chapterSnippets.first?.start ?? 0
-            let totalDuration = chapterSnippets.reduce(0) { $0 + $1.duration }
-
-            // Create a synthetic snippet for the chapter
-            let chapterSnippet = TranscriptSnippet(text: combinedText, start: startTime, duration: totalDuration)
-            chapters.append(VideoChapter(snippet: chapterSnippet))
-
-            currentSnippetIndex = endIndex
-        }
-
-        return chapters
-    }
 }
 
 struct BackendCommentsResponse: Codable {

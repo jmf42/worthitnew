@@ -766,7 +766,7 @@ DECODO_PORT = os.getenv("DECODO_PROXY_PORT", "7000")
 GEN_HTTP = os.getenv("PROXY_HTTP_URL") or os.getenv("HTTP_PROXY")
 GEN_HTTPS = os.getenv("PROXY_HTTPS_URL") or os.getenv("HTTPS_PROXY")
 
-TRANSCRIPT_PROXY_ATTEMPT_TIMEOUT = float(os.getenv("TRANSCRIPT_PROXY_ATTEMPT_TIMEOUT", "2.0"))
+TRANSCRIPT_PROXY_ATTEMPT_TIMEOUT = float(os.getenv("TRANSCRIPT_PROXY_ATTEMPT_TIMEOUT", "4.0"))
 TRANSCRIPT_PROXY_ATTEMPTS_PER_PROVIDER = int(os.getenv("TRANSCRIPT_PROXY_ATTEMPTS_PER_PROVIDER", "2"))
 TRANSCRIPT_PROXY_FAILURE_THRESHOLD = int(os.getenv("TRANSCRIPT_PROXY_FAILURE_THRESHOLD", "2"))
 TRANSCRIPT_PROXY_COOLDOWN_SECONDS = float(os.getenv("TRANSCRIPT_PROXY_COOLDOWN_SECONDS", "300"))
@@ -966,10 +966,32 @@ def fetch_api_once(video_id: str,
 
             # 1) Prefer original (unique manual or unique generated) when enabled
             if prefer_original and not strict_languages and ft is None:
-                if manual_list:
-                    ft = fetch_from_transcript(manual_list[0])
-                elif generated_list:
-                    ft = fetch_from_transcript(generated_list[0])
+                # Respect requested languages when preferring originals to avoid
+                # grabbing the first manual track in the list (which can be a different language).
+                def _matches_lang(transcript_obj, targets: List[str]) -> bool:
+                    code = getattr(transcript_obj, "language_code", "") or ""
+                    base = code.split("-", 1)[0]
+                    for lang in targets:
+                        lang = (lang or "").strip()
+                        if not lang:
+                            continue
+                        if lang == code:
+                            return True
+                        if lang.split("-", 1)[0] == base:
+                            return True
+                    return False
+
+                for lang in languages_final:
+                    candidate = next((tr for tr in manual_list if _matches_lang(tr, [lang])), None)
+                    if candidate:
+                        ft = fetch_from_transcript(candidate)
+                        break
+                if ft is None:
+                    for lang in languages_final:
+                        candidate = next((tr for tr in generated_list if _matches_lang(tr, [lang])), None)
+                        if candidate:
+                            ft = fetch_from_transcript(candidate)
+                            break
 
             # 2) Try manual in the exact user-provided order
             if ft is None and languages_final:
@@ -1022,12 +1044,15 @@ def fetch_api_once(video_id: str,
             fetched = ytt_api.fetch(video_id, languages=languages_final)
             ft = fetched
             selected_transcript = None
-    except Exception:
+    except Exception as e:
         log_event('warning', 'transcript_method_failure', extra={
             "method": "youtube-transcript-api",
             "video_id": video_id,
-            "reason": "NoTranscriptFound",
+            "reason": getattr(e, "__class__", type("x",(object,),{})).__name__ if e else "Exception",
+            "error": str(e),
             "languages_attempted": languages_final,
+            "proxy_used": proxy_cfg is not None,
+            "timeout_used": timeout,
             "duration_ms": int((time.perf_counter() - t0) * 1000),
             "request_id": request_id
         })
@@ -1365,20 +1390,21 @@ def get_transcript(video_id: str,
             })
 
     # Step 2+: Run remaining fallbacks in parallel (timedtext + yt-dlp)
+    proxy_url = _gateway_url()
     fallback_attempts = [
         (
-            "timedtext",
+            "timedtext_proxy" if proxy_url else "timedtext",
             lambda: timedtext_try_languages(
                 video_id,
                 languages,
                 request_id=request_id,
                 allow_translate=allow_translate,
-                allow_proxy=False
+                allow_proxy=True
             )
         ),
         (
-            "yt-dlp_no_proxy",
-            lambda: fetch_ytdlp(video_id, None, request_id=request_id, languages=languages)
+            "yt-dlp_proxy" if proxy_url else "yt-dlp_no_proxy",
+            lambda: fetch_ytdlp(video_id, proxy_url, request_id=request_id, languages=languages)
         ),
     ]
 
@@ -1429,7 +1455,7 @@ def get_transcript(video_id: str,
         "duration_ms": int((time.perf_counter() - t0_workflow) * 1000),
         "request_id": request_id
     })
-    raise NoTranscriptFound
+    raise NoTranscriptFound(video_id, languages or [], None)
 
 # --- Transcript Fallback Helpers ---
 def _strip_tags(text: str) -> str:
