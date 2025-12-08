@@ -42,13 +42,6 @@ final class ShareHostingController: SLComposeServiceViewController {
             object: nil
         )
 
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleOpenMainAppNotification(_:)),
-            name: .shareExtensionOpenMainApp,
-            object: nil
-        )
-
         if !initialURLProcessed {
              processSharedItem()
         }
@@ -180,18 +173,7 @@ final class ShareHostingController: SLComposeServiceViewController {
         self.dismissExtension(withError: false)
     }
 
-    @objc private func handleOpenMainAppNotification(_ notification: Notification) {
-        let deepLink = (notification.object as? URL) ?? URL(string: AppConstants.subscriptionDeepLink)
-        if let deepLink {
-            Logger.shared.info("Open main app notification received. Attempting deep link: \(deepLink.absoluteString)", category: .shareExtension)
-            self.dismissExtension(withError: false, redirectURL: deepLink)
-        } else {
-            Logger.shared.warning("Open main app notification received without a valid URL. Dismissing extension only.", category: .shareExtension)
-            self.dismissExtension(withError: false)
-        }
-    }
-
-    private func dismissExtension(withError: Bool, redirectURL: URL? = nil) {
+    private func dismissExtension(withError: Bool) {
         // Release the general share-extension lock acquired at launch
         FileLock.release("com.worthitai.share.active.lock")
 
@@ -206,21 +188,7 @@ final class ShareHostingController: SLComposeServiceViewController {
                 self.extensionContext?.cancelRequest(withError: NSError(domain: AppConstants.bundleID, code: 1, userInfo: [NSLocalizedDescriptionKey: "Share extension cancelled with error."]))
                 return
             }
-
-            guard let url = redirectURL else {
-                finish()
-                return
-            }
-
-            self.extensionContext?.open(url) { success in
-                if success {
-                    Logger.shared.info("Successfully handed off to WorthIt app for subscription.", category: .shareExtension)
-                    finish()
-                } else {
-                    Logger.shared.error("Failed to open WorthIt app via deep link from share extension.", category: .shareExtension)
-                    NotificationCenter.default.post(name: .shareExtensionOpenMainAppFailed, object: nil)
-                }
-            }
+            finish()
         }
     }
 

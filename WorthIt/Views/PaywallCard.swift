@@ -17,10 +17,9 @@ struct PaywallCard: View {
     @State private var infoMessage: String?
     @State private var infoMessageColor: Color = Theme.Color.secondaryText
     @State private var showLoadingSkeleton = true
-    @State private var extensionLaunchState: ShareExtensionLaunchState = .idle
 
     private var productsStillLoading: Bool {
-        !isInExtension && subscriptionManager.isLoadingProducts && subscriptionManager.products.isEmpty
+        subscriptionManager.isLoadingProducts && subscriptionManager.products.isEmpty
     }
 
     private var annualProduct: Product? {
@@ -150,6 +149,8 @@ struct PaywallCard: View {
     }
 
     private var maxCardWidth: CGFloat { isInExtension ? 320 : 340 }
+    private var isQAPaywall: Bool { context.reason == .qaLimitReached }
+    private var qaSnapshot: QAUsageTracker.Snapshot? { context.qaSnapshot }
 
     var body: some View {
         VStack(spacing: isInExtension ? 18 : 20) {
@@ -158,11 +159,7 @@ struct PaywallCard: View {
 
             premiumBenefits
 
-            if isInExtension {
-                shareExtensionActions
-            } else {
-                mainExperienceStack
-            }
+            mainExperienceStack
         }
         .frame(maxWidth: maxCardWidth)
         .padding(.vertical, isInExtension ? 18 : 22)
@@ -189,11 +186,10 @@ struct PaywallCard: View {
         .onAppear {
             if isInExtension {
                 infoMessage = nil
-                triggerExtensionAutoLaunchIfNeeded()
             } else if selectedPlanID == nil, let defaultPlan = plans.first?.id {
                 selectedPlanID = defaultPlan
             }
-            showLoadingSkeleton = productsStillLoading || (!isInExtension && subscriptionManager.products.isEmpty)
+            showLoadingSkeleton = productsStillLoading
             viewModel.paywallPresented(reason: context.reason)
             Task {
                 await subscriptionManager.refreshProducts()
@@ -201,7 +197,6 @@ struct PaywallCard: View {
             }
         }
         .onChange(of: subscriptionManager.products) { _ in
-            guard !isInExtension else { return }
             if selectedPlanID == nil, let defaultPlan = plans.first?.id {
                 selectedPlanID = defaultPlan
             }
@@ -210,15 +205,8 @@ struct PaywallCard: View {
             }
         }
         .onChange(of: subscriptionManager.isLoadingProducts) { _ in
-            guard !isInExtension else { return }
             withAnimation(.easeInOut(duration: 0.25)) {
                 showLoadingSkeleton = productsStillLoading
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .shareExtensionOpenMainAppFailed)) { _ in
-            guard isInExtension else { return }
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                extensionLaunchState = .failed
             }
         }
     }
@@ -274,33 +262,68 @@ struct PaywallCard: View {
         return String(format: "%.0f min", minutes)
     }
 
+    @ViewBuilder
     private var usageSummary: some View {
-        let snapshot = context.usageSnapshot
-        let dailyLimit = max(snapshot.limit, AppConstants.dailyFreeAnalysisLimit)
-        let used = min(snapshot.count, dailyLimit)
-        let remaining = max(0, dailyLimit - used)
+        if isQAPaywall, let qa = qaSnapshot {
+            let dailyLimit = max(qa.limitPerDay, AppConstants.dailyFreeQAQuestionLimit)
+            let used = min(qa.totalCount, dailyLimit)
+            let remaining = max(0, dailyLimit - used)
 
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Free plan • \(dailyLimit) analyses/day")
-                    .font(Theme.Font.captionBold)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Free plan • \(dailyLimit) Q&A questions/day")
+                        .font(Theme.Font.captionBold)
+                        .foregroundColor(Theme.Color.secondaryText)
+                    Spacer()
+                    Text("\(remaining) left today")
+                        .font(Theme.Font.captionBold)
+                        .foregroundColor(Theme.Color.primaryText)
+                }
+
+                ProgressView(value: Double(used), total: Double(dailyLimit))
+                    .progressViewStyle(LinearProgressViewStyle(tint: Theme.Color.accent))
+
+                Text("This video: \(qa.countForVideo)/\(qa.limitPerVideo) free questions used")
+                    .font(Theme.Font.caption2)
                     .foregroundColor(Theme.Color.secondaryText)
-                Spacer()
-                Text("\(remaining) left today")
-                    .font(Theme.Font.captionBold)
-                    .foregroundColor(Theme.Color.primaryText)
             }
+            .padding(isInExtension ? 10 : 12)
+            .background(cardFill(cornerRadius: isInExtension ? 16 : 18))
+            .overlay(cardStroke(cornerRadius: isInExtension ? 16 : 18))
+        } else {
+            let snapshot = context.usageSnapshot
+            let dailyLimit = max(snapshot.limit, AppConstants.dailyFreeAnalysisLimit)
+            let used = min(snapshot.count, dailyLimit)
+            let remaining = max(0, dailyLimit - used)
 
-            ProgressView(value: Double(used), total: Double(dailyLimit))
-                .progressViewStyle(LinearProgressViewStyle(tint: Theme.Color.accent))
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Free plan • \(dailyLimit) analyses/day")
+                        .font(Theme.Font.captionBold)
+                        .foregroundColor(Theme.Color.secondaryText)
+                    Spacer()
+                    Text("\(remaining) left today")
+                        .font(Theme.Font.captionBold)
+                        .foregroundColor(Theme.Color.primaryText)
+                }
+
+                ProgressView(value: Double(used), total: Double(dailyLimit))
+                    .progressViewStyle(LinearProgressViewStyle(tint: Theme.Color.accent))
+            }
+            .padding(isInExtension ? 10 : 12)
+            .background(cardFill(cornerRadius: isInExtension ? 16 : 18))
+            .overlay(cardStroke(cornerRadius: isInExtension ? 16 : 18))
         }
-        .padding(isInExtension ? 10 : 12)
-        .background(cardFill(cornerRadius: isInExtension ? 16 : 18))
-        .overlay(cardStroke(cornerRadius: isInExtension ? 16 : 18))
     }
 
     private var premiumBenefits: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if isInExtension {
+                Text("Upgrade here. Premium unlocks unlimited videos in the WorthIt app.")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 16, weight: .semibold))
@@ -536,7 +559,7 @@ struct PaywallCard: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         } else {
-                            Text("Start Premium")
+                            Text(primaryButtonTitle)
                                 .font(Theme.Font.body.weight(.semibold))
                                 .foregroundColor(.white)
                         }
@@ -608,90 +631,6 @@ struct PaywallCard: View {
                 .foregroundColor(Theme.Color.secondaryText)
         }
         .buttonStyle(.plain)
-    }
-
-    private var shareExtensionActions: some View {
-        VStack(spacing: 18) {
-            shareExtensionStatusRow
-            Button(action: manuallyOpenWorthIt) {
-                HStack(spacing: 10) {
-                    if extensionLaunchState == .launching {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    }
-                    Text(extensionLaunchState == .failed ? "Try opening WorthIt again" : "Open WorthIt")
-                        .font(Theme.Font.body.weight(.semibold))
-                        .foregroundColor(.white)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-            }
-            .buttonStyle(.plain)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Theme.Gradient.appBluePurple)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.white.opacity(0.18), lineWidth: 0.9)
-                            .blendMode(.screen)
-                    )
-            )
-            .disabled(extensionLaunchState == .launching)
-            .opacity(extensionLaunchState == .launching ? 0.65 : 1.0)
-
-            Button(action: dismissTapped) {
-                Text("Close share sheet")
-                    .font(Theme.Font.captionBold)
-                    .foregroundColor(Theme.Color.secondaryText)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private func shareExtensionStatusText() -> (text: String, color: Color) {
-        switch extensionLaunchState {
-        case .launching:
-            return ("Opening WorthIt…", Theme.Color.primaryText)
-        case .failed:
-            return ("Couldn't open automatically. Tap below or try again.", Theme.Color.warning)
-        case .idle:
-            return ("Open WorthIt to finish upgrading to Premium.", Theme.Color.primaryText)
-        }
-    }
-
-    @ViewBuilder
-    private var shareExtensionStatusRow: some View {
-        let status = shareExtensionStatusText()
-        HStack(spacing: 12) {
-            if extensionLaunchState == .launching {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: Theme.Color.accent))
-            } else {
-                Image(systemName: extensionLaunchState == .failed ? "exclamationmark.triangle.fill" : "sparkles")
-                    .foregroundColor(extensionLaunchState == .failed ? Theme.Color.warning : Theme.Color.accent)
-            }
-            Text(status.text)
-                .font(Theme.Font.subheadlineBold)
-                .foregroundColor(status.color)
-                .multilineTextAlignment(.leading)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func manuallyOpenWorthIt() {
-        guard extensionLaunchState != .launching else { return }
-        extensionLaunchState = .launching
-        openWorthItFromExtension()
-    }
-
-    private func openWorthItFromExtension() {
-        if let url = URL(string: AppConstants.subscriptionDeepLink) {
-            NotificationCenter.default.post(name: .shareExtensionOpenMainApp, object: url)
-        } else {
-            NotificationCenter.default.post(name: .shareExtensionOpenMainApp, object: nil)
-        }
     }
 
     private func select(_ plan: PaywallPlanOption) {
@@ -784,12 +723,8 @@ struct PaywallCard: View {
             .stroke(style, lineWidth: lineWidth)
     }
 
-    private func triggerExtensionAutoLaunchIfNeeded() {
-        guard isInExtension, extensionLaunchState == .idle else { return }
-        extensionLaunchState = .launching
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            openWorthItFromExtension()
-        }
+    private var primaryButtonTitle: String {
+        isInExtension ? "Upgrade to Premium" : "Start Premium"
     }
 
     private enum PurchaseSource {
@@ -798,11 +733,6 @@ struct PaywallCard: View {
         var analyticsValue: String { "primary_cta" }
     }
 
-    private enum ShareExtensionLaunchState {
-        case idle
-        case launching
-        case failed
-    }
 }
 
 struct PaywallPlanOption: Identifiable, Equatable {

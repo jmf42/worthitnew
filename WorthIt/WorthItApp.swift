@@ -20,6 +20,7 @@ struct WorthItApp: App {
         let apiManager = APIManager()         // New instance, no 'self' dependency
         let subscriptionManager = SubscriptionManager()
         let usageTracker = UsageTracker.shared
+        let qaUsageTracker = QAUsageTracker.shared
         apiManager.preWarm()   // Keep Render container warm
 
         // Now initialize StateObject with these local constants/variables
@@ -29,7 +30,8 @@ struct WorthItApp: App {
                 apiManager: apiManager,
                 cacheManager: cacheManager,
                 subscriptionManager: subscriptionManager,
-                usageTracker: usageTracker
+                usageTracker: usageTracker,
+                qaUsageTracker: qaUsageTracker
             )
         )
 

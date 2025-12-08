@@ -212,6 +212,7 @@ struct StartOptionsView: View {
     let isRunningInExtension: Bool
     let pasteFieldFocus: FocusState<Bool>.Binding
     let dismissKeyboard: () -> Void
+    let onShareFromYouTube: () -> Void
 
     @State private var ctaPulse = false
 
@@ -237,7 +238,7 @@ struct StartOptionsView: View {
             optionHeader(
                 number: 2,
                 title: "Share from YouTube",
-                icon: "square.and.arrow.up"
+                icon: "arrowshape.turn.up.right.fill"
             )
             sharePill
 
@@ -465,39 +466,45 @@ struct StartOptionsView: View {
     }
 
     private var sharePill: some View {
-        let background = RoundedRectangle(cornerRadius: 12)
-        return HStack(spacing: 12) {
-            Text("Share from YouTube")
-                .font(Theme.Font.subheadlineBold)
-                .foregroundColor(Theme.Color.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.9)
-            Spacer()
-            Image("AppLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 20, height: 20)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.Color.accent.opacity(0.25), lineWidth: 0.5))
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onShareFromYouTube()
+        } label: {
+            let background = RoundedRectangle(cornerRadius: 12)
+            return HStack(spacing: 12) {
+                Text("While watching a video")
+                    .font(Theme.Font.subheadline)
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.7)) // Match placeholder tone
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+                Spacer()
+                Image("AppLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 20, height: 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.Color.accent.opacity(0.25), lineWidth: 0.5))
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: optionControlHeight, maxHeight: optionControlHeight)
+            .background(
+                background
+                    .fill(Theme.Color.sectionBackground.opacity(0.28))
+                    .background(
+                        background
+                            .fill(Color.white.opacity(0.03))
+                            .blur(radius: 4)
+                    )
+            )
+            .overlay(
+                background.stroke(Color.white.opacity(0.1), lineWidth: 0.6)
+            )
+            .overlay(
+                background
+                    .stroke(Theme.Color.accent.opacity(0.0), lineWidth: 1.8)
+            )
         }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: optionControlHeight, maxHeight: optionControlHeight)
-        .background(
-            background
-                .fill(Theme.Color.sectionBackground.opacity(0.28))
-                .background(
-                    background
-                        .fill(Color.white.opacity(0.03))
-                        .blur(radius: 4)
-                )
-        )
-        .overlay(
-            background.stroke(Color.white.opacity(0.1), lineWidth: 0.6)
-        )
-        .overlay(
-            background
-                .stroke(Theme.Color.accent.opacity(0.0), lineWidth: 1.8)
-        )
+        .buttonStyle(.plain)
     }
 
     private func optionHeader(number: Int, title: String, icon: String) -> some View {
@@ -523,10 +530,9 @@ struct StartOptionsView: View {
             )
             StepGuideRow(
                 number: "2",
-                icon: "square.and.arrow.up",
+                icon: "arrowshape.turn.up.right.fill",
                 title: "Tap Share → WorthIt",
-                description: "If it's missing, tap More (…) once and add WorthIt to Favorites.",
-                titleSymbol: "square.and.arrow.up"
+                description: "Tap the Share arrow, then choose WorthIt. If it's missing, tap More (…) and add WorthIt to Favorites.",
             )
             StepGuideRow(
                 number: "3",
@@ -734,7 +740,8 @@ private struct StartOptionsPreviewContainer: View {
             borderGradient: Theme.Gradient.appBluePurple,
             isRunningInExtension: false,
             pasteFieldFocus: $isPasteFocused,
-            dismissKeyboard: { isPasteFocused = false }
+            dismissKeyboard: { isPasteFocused = false },
+            onShareFromYouTube: {}
         )
         .environmentObject(mainViewModel)
         .onAppear {

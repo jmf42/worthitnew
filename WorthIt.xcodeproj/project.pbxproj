@@ -72,6 +72,7 @@
 				Models.swift,
 				Services/APIManager.swift,
 				Services/CacheManager.swift,
+				Services/QAUsageTracker.swift,
 				Services/SubscriptionManager.swift,
 				Services/UsageTracker.swift,
 				Utils/AnalyticsService.swift,
@@ -89,6 +90,7 @@
 				Views/RecentVideosCenterModal.swift,
 				Views/RootView.swift,
 				Views/SentimentSpectrumView.swift,
+				Views/ShareExplanationModal.swift,
 				Views/ShareOverlay.swift,
 				Views/StartOptionsView.swift,
 			);
@@ -561,7 +563,7 @@
 				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
 				CODE_SIGN_ENTITLEMENTS = WorthIt/WorthIt.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1.2;
+				CURRENT_PROJECT_VERSION = 1.2.3;
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = 4F94A62T5V;
 				ENABLE_PREVIEWS = YES;
@@ -577,7 +579,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthIt;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -598,7 +600,7 @@
 				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
 				CODE_SIGN_ENTITLEMENTS = WorthIt/WorthIt.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1.2;
+				CURRENT_PROJECT_VERSION = 1.2.3;
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = 4F94A62T5V;
 				ENABLE_PREVIEWS = YES;
@@ -614,7 +616,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthIt;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -734,7 +736,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthIt.Share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -765,7 +767,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = TuliAI.WorthIt.Share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

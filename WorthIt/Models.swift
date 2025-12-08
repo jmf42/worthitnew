@@ -16,6 +16,8 @@ struct AppConstants {
         AppConstants.subscriptionProductWeeklyID
     ]
     static let dailyFreeAnalysisLimit = 3
+    static let dailyFreeQAQuestionLimit = 7
+    static let freeQuestionsPerVideoLimit = 2
     static let subscriptionDeepLink = "worthitai://subscribe"
     static let termsOfUseURL = URL(string: "https://worthit.tuliai.com/terms")!
     static let privacyPolicyURL = URL(string: "https://worthit.tuliai.com/privacy")!

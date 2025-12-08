@@ -49,6 +49,7 @@ class MainViewModel: ObservableObject {
     @Published var hasCommentsAvailableForError: Bool = false
     @Published var activePaywall: PaywallContext? = nil
     @Published var shouldOpenManageSubscriptions: Bool = false
+    @Published var hasHitQALimit: Bool = false
 
     private(set) var currentVideoID: String?
     @Published var currentVideoTitle: String?
@@ -82,11 +83,13 @@ class MainViewModel: ObservableObject {
     private let cacheManager: CacheManager
     private let subscriptionManager: SubscriptionManager
     private let usageTracker: UsageTracker
+    private let qaUsageTracker: QAUsageTracker
     private var cancellables = Set<AnyCancellable>()
     @Published private(set) var isUserSubscribed: Bool = false
     private var usageReservations: [String: Bool] = [:]
     private var latestUsageSnapshot: UsageTracker.Snapshot?
     private var paywallLoggedImpression = false
+    @Published private(set) var lastQALimitSnapshot: QAUsageTracker.Snapshot?
 
     private var isRunningInExtension: Bool {
         Bundle.main.bundlePath.lowercased().contains(".appex")
@@ -95,16 +98,25 @@ class MainViewModel: ObservableObject {
     struct PaywallContext {
         let reason: PaywallReason
         let usageSnapshot: UsageTracker.Snapshot
+        let qaSnapshot: QAUsageTracker.Snapshot?
+
+        init(reason: PaywallReason, usageSnapshot: UsageTracker.Snapshot, qaSnapshot: QAUsageTracker.Snapshot? = nil) {
+            self.reason = reason
+            self.usageSnapshot = usageSnapshot
+            self.qaSnapshot = qaSnapshot
+        }
     }
 
     enum PaywallReason: String {
         case dailyLimitReached
         case manual
+        case qaLimitReached
 
         var analyticsLabel: String {
             switch self {
             case .dailyLimitReached: return "daily_limit"
             case .manual: return "manual"
+            case .qaLimitReached: return "qa_limit"
             }
         }
     }
@@ -178,11 +190,12 @@ class MainViewModel: ObservableObject {
 
     // Streaming removed: we now render a skeleton until full analysis is ready
 
-    init(apiManager: APIManager, cacheManager: CacheManager, subscriptionManager: SubscriptionManager, usageTracker: UsageTracker) {
+    init(apiManager: APIManager, cacheManager: CacheManager, subscriptionManager: SubscriptionManager, usageTracker: UsageTracker, qaUsageTracker: QAUsageTracker = QAUsageTracker.shared) {
         self.apiManager = apiManager
         self.cacheManager = cacheManager
         self.subscriptionManager = subscriptionManager
         self.usageTracker = usageTracker
+        self.qaUsageTracker = qaUsageTracker
         self.isUserSubscribed = subscriptionManager.isSubscribed
         Logger.shared.info("MainViewModel initialized.", category: .lifecycle)
 
@@ -197,7 +210,10 @@ class MainViewModel: ObservableObject {
                     self.usageReservations.removeAll()
                     Task { [weak self] in
                         await self?.usageTracker.clearAll()
+                        await self?.qaUsageTracker.clearAll()
                     }
+                    self.hasHitQALimit = false
+                    self.lastQALimitSnapshot = nil
                 }
             }
             .store(in: &cancellables)
@@ -1053,7 +1069,7 @@ class MainViewModel: ObservableObject {
         let resolvedScore = worthItScore ?? 0
         let decision = essentialsCommentAnalysis
         let analysis = analysisResult
-        let verdict = decisionVerdict(from: decision?.decisionVerdict) ?? verdictForScore(resolvedScore)
+        let verdict = verdictForScore(resolvedScore)
 
         let depthDetail: String = {
             if let reason = decision?.decisionReasons.first, !reason.isEmpty {
@@ -1068,7 +1084,7 @@ class MainViewModel: ObservableObject {
 
         let commentsCount = llmAnalyzedComments.count
         let sentimentPercent = essentialsCommentAnalysis?.overallCommentSentimentScore.map { Int($0 * 100) }
-        var commentsDetail = commentsCount > 0 ? "\(commentsCount) comments analyzed" : "No comments yet — score based on content"
+        var commentsDetail = commentsCount > 0 ? "\(commentsCount) comments analyzed" : "No comments yet - score based on content"
         if let sent = sentimentPercent {
             commentsDetail = "\(commentsDetail) · Sentiment \(sent)%"
         }
@@ -1127,17 +1143,9 @@ class MainViewModel: ObservableObject {
         return .maybe
     }
 
-    private func decisionVerdict(from string: String?) -> DecisionVerdict? {
-        guard let raw = string?.lowercased() else { return nil }
-        if raw.contains("worth") { return .worthIt }
-        if raw.contains("skip") { return .skip }
-        if raw.contains("border") { return .maybe }
-        return nil
-    }
-
     private func parseBestMomentSeconds(from text: String?) -> Int? {
         guard let t = text else { return nil }
-        // Expect formats like "mm:ss — ..." or "m:ss"
+        // Expect formats like "mm:ss - ..." or "m:ss"
         let parts = t.split(separator: " ").first ?? ""
         let timeParts = parts.split(separator: ":")
         guard timeParts.count == 2,
@@ -1179,7 +1187,7 @@ class MainViewModel: ObservableObject {
         }
 
         if !hasComments {
-            return "Based on content depth; comments pending."
+            return "Solid content depth; no comments (neutral)."
         }
 
         switch (depth, sentiment) {
@@ -1266,12 +1274,41 @@ class MainViewModel: ObservableObject {
     }
 
     func sendQAQuestion() {
-        guard !qaInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        Task { @MainActor in
+            await performSendQAQuestion()
+        }
+    }
+
+    @MainActor
+    private func performSendQAQuestion() async {
+        let trimmedInput = qaInputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInput.isEmpty else {
             Logger.shared.warning("Cannot send Q&A: input text missing.", category: .ui)
             return
         }
 
-        let userMessage = ChatMessage(content: qaInputText.trimmingCharacters(in: .whitespacesAndNewlines), isUser: true)
+        // Free-tier gating for Q&A usage
+        if !isUserSubscribed, let videoId = currentVideoID {
+            let allowance = await qaUsageTracker.registerQAQuestion(
+                for: videoId,
+                dailyLimit: AppConstants.dailyFreeQAQuestionLimit,
+                perVideoLimit: AppConstants.freeQuestionsPerVideoLimit
+            )
+
+            if allowance.allowed == false {
+                hasHitQALimit = true
+                lastQALimitSnapshot = allowance.snapshot
+                presentQAPaywall(from: allowance.snapshot)
+                return
+            } else {
+                hasHitQALimit = false
+                lastQALimitSnapshot = allowance.snapshot
+            }
+        } else {
+            hasHitQALimit = false
+        }
+
+        let userMessage = ChatMessage(content: trimmedInput, isUser: true)
         qaMessages.append(userMessage)
         let cache = cacheManager
         if let vid = self.currentVideoID {
@@ -1280,7 +1317,7 @@ class MainViewModel: ObservableObject {
                 await cache.saveQAMessages(snapshot, for: vid)
             }
         }
-        let currentQuestion = qaInputText
+        let currentQuestion = trimmedInput
         
         // Log analytics
         if let videoId = currentVideoID {
@@ -1426,6 +1463,8 @@ class MainViewModel: ObservableObject {
         latestUsageSnapshot = nil
         activePaywall = nil
         paywallLoggedImpression = false
+        hasHitQALimit = false
+        lastQALimitSnapshot = nil
     }
 
     func clearCurrentError() {
@@ -1444,8 +1483,8 @@ class MainViewModel: ObservableObject {
 
     // MARK: - Paywall Presentation
 
-    private func presentPaywall(reason: PaywallReason, usageSnapshot: UsageTracker.Snapshot) {
-        activePaywall = PaywallContext(reason: reason, usageSnapshot: usageSnapshot)
+    private func presentPaywall(reason: PaywallReason, usageSnapshot: UsageTracker.Snapshot, qaSnapshot: QAUsageTracker.Snapshot? = nil) {
+        activePaywall = PaywallContext(reason: reason, usageSnapshot: usageSnapshot, qaSnapshot: qaSnapshot)
         paywallLoggedImpression = false
         latestUsageSnapshot = usageSnapshot
     }
@@ -1454,6 +1493,36 @@ class MainViewModel: ObservableObject {
         Task { @MainActor in
             let snapshot = await usageTracker.snapshot(dailyLimit: AppConstants.dailyFreeAnalysisLimit)
             presentPaywall(reason: .manual, usageSnapshot: snapshot)
+        }
+    }
+
+    private func presentQAPaywall(from snapshot: QAUsageTracker.Snapshot) {
+        let mapped = UsageTracker.Snapshot(
+            date: snapshot.date,
+            count: snapshot.totalCount,
+            limit: snapshot.limitPerDay,
+            remaining: snapshot.remainingToday,
+            videoIds: []
+        )
+        presentPaywall(reason: .qaLimitReached, usageSnapshot: mapped, qaSnapshot: snapshot)
+    }
+
+    func requestQAPaywallPresentation() {
+        Task { @MainActor in
+            if let snapshot = lastQALimitSnapshot {
+                presentQAPaywall(from: snapshot)
+                return
+            }
+            if let videoId = currentVideoID {
+                let snapshot = await qaUsageTracker.snapshot(
+                    dailyLimit: AppConstants.dailyFreeQAQuestionLimit,
+                    perVideoLimit: AppConstants.freeQuestionsPerVideoLimit,
+                    videoId: videoId
+                )
+                lastQALimitSnapshot = snapshot
+                hasHitQALimit = snapshot.totalCount >= snapshot.limitPerDay || snapshot.countForVideo >= snapshot.limitPerVideo
+                presentQAPaywall(from: snapshot)
+            }
         }
     }
 

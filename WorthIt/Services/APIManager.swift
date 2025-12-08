@@ -18,7 +18,7 @@ enum NetworkError: LocalizedError {
         case .serverUnavailable:
             return "Our servers are temporarily unavailable. Please try again later."
         case .rateLimited:
-            return "Too many requests — please wait a moment and retry."
+            return "Too many requests - please wait a moment and retry."
         case .decodingFailed:
             return "We couldn't read the server response."
         case .network(let err):
@@ -600,13 +600,13 @@ LANGUAGE DETECTION WALKTHROUGH (DO NOT SKIP):
 - Capitalize the first word of every sentence and bullet in "longSummary" and "takeaways". (Do NOT alter capitalization in "gemsOfWisdom".)
 
 FIELD RULES:
-1) "longSummary" (≤ 300 words, ≤ 1800 characters) — provide a proper summary of the video, structure MUST be:
+1) "longSummary" (≤ 300 words, ≤ 1800 characters) - provide a proper summary of the video, structure MUST be:
    - First line: "Highlights:"
    - Next exactly two lines, each starting with "• " (≤ 18 words):
      • Bullet 1 = core claim (what this is about) - dont mention "Core claim" literally here.
      • Bullet 2 = method/result (how it’s argued, a key step, or concrete outcome). If an exact named term exists, include it; otherwise use a concrete detail (number/example). Don't mention "Method/result" literally here.
    - Then a blank line (one empty line between bullets and narrative; do not print the characters "\\n" or "/n" literally).
-   - Then 2–4 natural sentences, each on its own line (one line break between sentences; no extra blank lines). Do not write the literal characters "\\n" or "/n"; just separate lines — JSON will escape newlines. Simply write cohesive prose. Include concepts/definitions/rules EXACTLY as they appear (preserve casing/spelling) when present, all in the transcript.
+   - Then 2–4 natural sentences, each on its own line (one line break between sentences; no extra blank lines). Do not write the literal characters "\\n" or "/n"; just separate lines - JSON will escape newlines. Simply write cohesive prose. Include concepts/definitions/rules EXACTLY as they appear (preserve casing/spelling) when present, all in the transcript.
    - Do not output standalone quote characters or empty quoted lines; write only meaningful content lines.
 
 2) "takeaways": the top 3 takeaways from the video transcript, exactly 3 items, each 12–22 words. Make them applied and distinct from "Highlights" in the summary section:
@@ -668,9 +668,10 @@ Language (OVERRIDES ALL): Detect language ONLY from the comments list. Write eve
 Output rules (what each field must capture):
 - Valid JSON only, no extra text. Replace newlines with spaces.
 - Use COMMENTS ONLY. Do not reference transcript or anything else.
-- CommentssentimentSummary: 1–2 sentences (≤220 chars) that blend (a) dominant praise/positivity, (b) main concerns/complaints, (c) any warning/ask signal (spam/requests/confusion). Make it directly useful to decide whether to watch. If comments are English, this MUST be English. No translation, no language switching.
+- CommentssentimentSummary: 1–2 sentences (≤220 chars) that blend (a) dominant praise/positivity, (b) main concerns/complaints, (c) any warning/ask signal (spam/requests/confusion). Start the phrase with caps. Make it directly useful to decide whether to watch. If comments are English, this MUST be English. No translation, no language switching.
 - topThemes: Return 2–3 distinct topics that appear across different comments (praise, complaints, debates). Only include if ≥2 themes exist; else []. Theme names must be short, human-readable (2–5 words), and not camelCase/hashtags (e.g., write “AI impact on jobs”, not “AIImpactOnJobs”). For each, set sentiment = Positive/Negative/Mixed/Neutral based on the supporting comments. exampleComment must be a ≤80-char exact slice from a distinct comment backing that theme.
-- spamRatio: fraction 0–1 of comments that are spam. If you don’t see spam, return 0.
+- spam handling (CRITICAL): Mark as spam any promo/plug for products, books, courses, channels, links, discounts, affiliate/referral/crypto pitches, or copy-paste promos - even if phrased as a “recommendation” or “I bought this”. Example: “I read Power Behind The Curtain by Dave Rumsfeld. I ordered it the same night.” ⇒ spam. Exclude ALL spam from topThemes.
+- spamRatio: fraction 0–1 of comments that are spam. If ≥2 promo/plug spam comments appear, spamRatio should be high (≥0.35) even if other comments are genuine. If you don’t see spam, return 0.
 - viewerTips: Up to 2 concrete, actionable tips/fixes/shortcuts explicitly present in the comments (≤120 chars). Must NOT be questions, compliments, or generic praise; do NOT include links, discounts, or ads. If none, return [].
 - openQuestions: Up to 2 genuine unanswered asks explicitly present in the comments (≤120 chars). These should be real questions (include a “?”) from commenters. No invention; if none, return [].
 - SentimentScore ranges: Positive [0.2,1], Negative [-1,-0.2], Neutral [-0.2,0.2], Mixed near 0. Round to 2 decimals.
@@ -692,36 +693,24 @@ comments_count: \(count)
             let pref = String((cleanedCtx.isEmpty ? transcriptContext : cleanedCtx).prefix(25000))
             return pref
         }()
+        let commentsPresent = !comments.isEmpty
         let prompt = """
 You are WorthIt Comment+Transcript Rater. Your output powers a "10-second decision card" that helps users instantly decide if a video is worth watching.
 
-LANGUAGE RULE (OVERRIDES ALL):
-- Detect language ONLY from the Transcript section below. That detected language = {LANG}. Every text field (decisionReasons, decisionLearnings, suggestedQuestions, decisionBestMoment, decisionSkip, signalQualityNote, depthExplanation, scoreReasonLine) MUST be entirely in {LANG}. No mixing. If you cannot write {LANG}, return {"error":"language_mismatch"}.
-- Ignore comments/device/system language or prior responses; they do not matter. If the transcript is clearly English (majority English words / ASCII, no clear other language), {LANG} MUST be English. Do NOT switch to Spanish or any other language when the transcript is English.
-- Mixed transcript handling: pick the single dominant language by word count; if English is the largest share, {LANG} MUST be English. Never blend languages.
-- Self-check: Before returning, re-read transcript and your output. If any word is not {LANG}, rewrite everything in {LANG}. If you cannot keep all fields in {LANG}, return {"error":"language_mismatch"}. Ignore example text in this prompt when deciding language; only the transcript decides {LANG}.
+1) LANGUAGE RULE (OVERRIDES ALL)
+- Detect language ONLY from the Transcript section (not comments, UI, or examples). Call it {LANG}.
+- If mixed, pick the dominant language by word count; if English has the largest share, {LANG} MUST be English.
+- Every text field must be entirely in {LANG}: decisionReasons, decisionLearnings, suggestedQuestions, decisionBestMoment, decisionSkip, signalQualityNote, depthExplanation.strengths, depthExplanation.weaknesses, scoreReasonLine.
+- If you cannot write in {LANG}, return {"error":"language_mismatch"}.
+- Before returning, re-read transcript and every text field. If any word is not {LANG}, rewrite all fields in {LANG} or return {"error":"language_mismatch"}.
 
-CONTEXT: Your output is used in MULTIPLE places:
-1. Decision Card UI (primary focus):
-   - Verdict badge (Worth It / Skip / Borderline) from decisionVerdict
-   - Score gauge (0-100%) calculated from your depth + sentiment scores
-   - Hero reason (the "why" - MAIN focal point, shown in large bold text) from decisionReasons[0]
-   - 1-2 learnings (shown with bolt icons) from decisionLearnings
-   - First suggested question (shown on secondary button) from suggestedQuestions[0]
-2. Ask Anything Screen:
-   - All 3 suggested questions shown as horizontal scrollable buttons
-3. Score Gauge & Breakdown:
-   - contentDepthScore and overallCommentSentimentScore used to calculate final score
-   - Scores displayed in progress bars and breakdown details
-
-TASK
-Return exactly ONE JSON object with these keys and nothing else (no extra keys):
+2) TASK & OUTPUT FORMAT
+Return exactly ONE JSON object with these keys and nothing else:
 {
   "overallCommentSentimentScore": float|null,
   "contentDepthScore": float|null,
   "scoreReasonLine": string|null,
   "suggestedQuestions": [string, string, string]|null,
-  "decisionVerdict": string|null,
   "decisionReasons": [string],
   "decisionLearnings": [string],
   "decisionBestMoment": string|null,
@@ -729,126 +718,69 @@ Return exactly ONE JSON object with these keys and nothing else (no extra keys):
   "signalQualityNote": string|null,
   "depthExplanation": {"strengths": [string], "weaknesses": [string]}|null
 }
-
-STRICT OUTPUT RULES
 - Valid JSON only. No markdown, no prose, no code fences, no trailing commas.
-- Floats must be in [0,1], rounded to 2 decimals (e.g., 0.63).
+- Floats in [0,1], rounded to 2 decimals.
 - If comments are empty/insufficient ⇒ overallCommentSentimentScore = null.
-- If transcript is empty/insufficient ⇒ contentDepthScore = null and suggestedQuestions = null.
+- If transcript is empty/insufficient ⇒ contentDepthScore = null, suggestedQuestions = null, depthExplanation = null.
 
-VERDICT DECISION LOGIC (CRITICAL - must align with final score thresholds)
-The app calculates a final score (0-100%) from your depth + sentiment scores using variable weights, spam penalties, and caps.
-Use these thresholds to determine verdict (matching the app's verdictForScore logic):
-- If you estimate the final score would be ≥ 70% → "Worth it"
-- If you estimate the final score would be ≤ 45% → "Skip"
-- Otherwise → "Borderline"
-Note: The app's actual calculation uses variable weights (depth 0.3-0.7, comments 0.0-0.45) plus spam penalties and caps, so your scores are inputs to that calculation, not the final score. Use the thresholds above as guidance.
-decisionVerdict: exactly one of ["Worth it", "Skip", "Borderline"] based on estimated final score thresholds above.
+3) CONTENT DEPTH SCORE (contentDepthScore)
+Goal: lasting, generalizable value (principles, frameworks, clear how-to, mental models). Use full 0–1 range.
+- Anchors:
+  • 0.00–0.20 fluff/promo; 0.25–0.40 surface/recap; 0.45–0.60 mixed; 0.61–0.75 solid; 0.76–0.85 excellent; 0.86–0.92 exceptional; 0.93–0.98 near-masterpiece.
+- Content-type caps (CRITICAL):
+  • Pure recap / breaking news / headline reporting → usually 0.15–0.35, never above 0.40.
+  • Entertainment/challenge with light tips → usually 0.55–0.70, almost never above 0.70.
+  • How-to/frameworks/analysis (clear steps, checklists, examples, trade-offs, mental models) → if steps + examples, depth ≥0.70; strong actionability + specificity ⇒ depth ≥0.75; mental model + examples + guidance ⇒ ~0.80–0.90.
+- Weighting concept: Actionability (0.30), Specificity (0.20), Depth of reasoning (0.20), Transferability (0.15), Novelty (0.10), Caveats (0.05).
 
-HERO REASON (decisionReasons) - THE MOST IMPORTANT FIELD
-This is the PRIMARY text shown in the UI - make it COMPELLING and HOOK-DRIVEN.
-- Must be in {LANG}. Exactly 1 item, STRICTLY 18-22 words. Say what the video is and why it matters, with a concrete detail (number/framework/outcome). No fluff or format hints.
+4) COMMENT SENTIMENT (overallCommentSentimentScore)
+Goal: how viewers feel, using comments only.
+- Bands:
+  • 0.00–0.20 strongly negative/toxic; 0.25–0.40 mostly negative; 0.45–0.55 mixed; 0.60–0.75 mostly positive; 0.76–0.85 strongly positive; 0.86–0.95 overwhelmingly positive/grateful.
+- Hostility/vengeance handling (CRITICAL):
+  • Dominantly angry/vengeful/punitive/violent comments ⇒ 0.15–0.35.
+  • Mixed with noticeable hostility ⇒ 0.35–0.50.
+  • Strong gratitude with specific value, minimal negativity ⇒ 0.80–0.90.
+- Spam/low-quality: de-duplicate, down-weight memes/spam; if mostly low-signal hostility/memes, treat as low-to-mixed.
+- If comments are missing/insufficient ⇒ overallCommentSentimentScore = null.
 
-SCORE REASON LINE (scoreReasonLine) - EXPLAINS THE SCORE ITSELF (not the topic)
-- Must be in {LANG}. ≤70 chars. One short sentence that explains why the worth-it score should be high/mid/low, explicitly referencing depth vs comments quality/sentiment/spam. Do NOT summarize the video topic.
-- Examples (adapt to signals): "Highly actionable and loved by viewers.", "Deep content, but reactions are mixed.", "Light depth, carried by happy viewers.", "Score tempered by spammy comments."
-- Examples are illustrative only; ALWAYS write scoreReasonLine fully in {LANG} even if examples are in English.
+4.1) NO COMMENTS BRANCH (if comments_present=false or comments_count=0)
+- Set overallCommentSentimentScore = null.
+- Set signalQualityNote = "Transcript-only, no comments".
+- Treat comments tone as "no comments (neutral)".
+- scoreReasonLine must mention depth level + "no comments (neutral)".
+- For any Skip/Borderline logic, apply depth-only thresholds in section 5.
 
-LEARNINGS (decisionLearnings) - Make them ACTIONABLE, not informational
-- Must be in {LANG}. 1–2 items, each ≤100 chars, actionable, with a specific detail (method/number/tool/outcome). No "You'll learn" prefix. If little actionability, give the most transferable principle.
+5) VERDICT THRESHOLDS (for consistency; do NOT output verdict)
+- Depth + sentiment thresholds: ≥0.70 ⇒ "Worth it"; ≤0.45 ⇒ "Skip"; else ⇒ "Borderline".
+- In no-comments cases, apply the same thresholds using depth only.
 
-SUGGESTED QUESTIONS - Curiosity-driven hooks (used in TWO places)
-⚠️ CRITICAL LANGUAGE REQUIREMENT FOR SUGGESTED QUESTIONS ⚠️
-- Must be in {LANG}. Exactly 3 items, each ≤7 words, specific to the transcript, action-led where possible, covering diverse hooks. First should be most compelling.
+6) FIELD RULES
+- decisionReasons: array of 1 string, {LANG}, 18–22 words, hook-driven, include ≥1 concrete detail (name/place/event/number/outcome).
+- scoreReasonLine: ≤100 chars, {LANG}, must start with a capital letter, and must mention BOTH content depth level (light/solid/deep/recap/how-to) AND comments tone (hostile/mixed/positive/spam). Do NOT restate topic.
+- decisionLearnings: 1–2 items, ≤100 chars each, {LANG}, actual viewer takeaways from THIS video (fact/principle/pattern). No production advice. If low-depth recap, give the most transferable principle/pattern.
+- suggestedQuestions: exactly 3 items, each ≤7 words, all {LANG}, specific to transcript, action-led if possible; first is most compelling.
+- decisionBestMoment: short {LANG} description of most impactful/informative moment if clear; else null.
+- decisionSkip: non-null only if thresholds imply "Skip" or "Borderline"; ≤90 chars; specific blocker. If "Worth it", must be null.
+- signalQualityNote: ≤70 chars, {LANG}, note data quality (e.g., “25 comments, mostly hostile”, “Transcript-only, no comments”); else null.
+- depthExplanation: null if transcript empty. Otherwise {LANG} object with strengths (1–2, ≤90 chars) and weaknesses (1–2, ≤90 chars) that justify depth score. Strengths focus on steps/frameworks/examples/trade-offs/caveats; weaknesses on lack of actionability/specifics/analysis/promo.
 
-BEST MOMENT (decisionBestMoment)
-- If a standout moment exists, return "mm:ss — <specific hook>" (≤80 chars)
-- Hook should be SPECIFIC: "The 3-step framework reveal" not "Important part"
-- Include timestamp in mm:ss format
-- Only include if there's a clear standout moment worth jumping to
-- Else null
+7) FINAL SELF-AUDIT (MANDATORY)
+Before returning JSON, verify:
+- Language: every text field 100% {LANG}; else rewrite or return {"error":"language_mismatch"}.
+- Depth: matches content type caps (recap/news ≤0.40; entertainment with light tips ≤~0.70; how-to with steps/examples ≥0.70).
+- Sentiment: matches dominant tone (hostile ⇒ low band; mixed ⇒ mid; grateful ⇒ high).
+- Verdict: matches thresholds from chosen scores.
+- Structure: decisionReasons length 18–22 words with a concrete detail; decisionLearnings are real takeaways; suggestedQuestions = 3 items ≤7 words; scoreReasonLine references depth + comments tone; decisionSkip only for Skip/Borderline.
 
-SKIP NOTE (decisionSkip)
-- Only when verdict is "Skip" or "Borderline"
-- Concise blocker (≤90 chars)
-- Be SPECIFIC: "60% sponsor content, minimal how-to" not "Too much promotion"
-- Else null
-
-SIGNAL QUALITY (signalQualityNote)
-- ≤70 chars on data quality
-- Be informative: "25 comments, low spam" or "Transcript-only, no comments"
-- Else null
-
-DEPTH EXPLANATION (depthExplanation) - CRITICAL for Score Breakdown UI
-This explains WHY the contentDepthScore is what it is. Used in "Why this depth score" section.
-- Return null if transcript is empty/insufficient
-- ⚠️ CRITICAL: MUST be in the SAME LANGUAGE as the transcript. Detect the transcript language (Spanish, Portuguese, French, German, Italian, or ANY other language) and write strengths and weaknesses in that EXACT language.
-- If transcript is Spanish → strengths and weaknesses MUST be in Spanish.
-- If transcript is Portuguese → strengths and weaknesses MUST be in Portuguese.
-- If transcript is French → strengths and weaknesses MUST be in French.
-- Do NOT default to English. Match the transcript language precisely.
-- strengths: 1-2 items, each ≤90 chars, explaining what makes content deep
-  • Focus on: actionability (steps, frameworks, checklists), specificity (numbers, examples, case studies), conceptual depth (trade-offs, mechanisms, edge cases), transferability (generalizable principles)
-  • Be SPECIFIC: "Includes 5-step framework with real examples" not "Has good structure"
-  • Examples (English): "Provides 3 concrete case studies with metrics", "Explains trade-offs between methods A and B", "Includes actionable checklist for implementation"
-  • Examples (Spanish): "Incluye 3 estudios de caso con métricas", "Explica compensaciones entre métodos A y B", "Incluye lista de verificación para implementación"
-  • Examples (Portuguese): "Fornece 3 estudos de caso concretos com métricas", "Explica trade-offs entre métodos A e B", "Inclui lista de verificação acionável para implementação"
-- weaknesses: 1-2 items, each ≤90 chars, explaining what limits depth
-  • Focus on: lack of actionability, surface-level content, promotional content, missing specifics
-  • Be SPECIFIC: "60% sponsor segments, minimal how-to content" not "Too much promotion"
-  • Examples (English): "No concrete steps, only general advice", "Surface-level definitions without examples", "Heavy on promotion, light on actionable insights"
-  • Examples (Spanish): "Sin pasos concretos, solo consejos generales", "Definiciones superficiales sin ejemplos", "Mucha promoción, pocas ideas accionables"
-  • Examples (Portuguese): "Sem passos concretos, apenas conselhos gerais", "Definições superficiais sem exemplos", "Muita promoção, poucas ideias acionáveis"
-- Only include items that directly explain the depth score - avoid generic statements
-
-SCORING RUBRIC (CRITICAL: Use FULL 0–1 range; do NOT be conservative)
-⚠️ Epic videos MUST score 0.80–0.95, NOT 0.65–0.75. Good videos (steps + examples) → 0.70–0.80, NOT 0.60–0.65.
-- Depth (contentDepthScore): “will this add lasting, generalizable value to the viewer’s life?” (principles, frameworks, clear how‑to steps).
-- Sentiment (overallCommentSentimentScore): “how do viewers feel about the video based on comments?” It can be high even if depth is moderate.
-
-- overallCommentSentimentScore (comments ONLY):
-  • 0.00–0.20 = negative/spammy; 0.25–0.40 = mostly negative; 0.45–0.55 = mixed (use sparingly)
-  • 0.60–0.75 = mostly positive (baseline); 0.76–0.85 = strongly positive; 0.86–0.95 = overwhelmingly positive
-  • If comments include multiple users saying things like "this saved me", "found this at the right time", "worth every second", "best video I've seen", "this helped my depression/anxiety" → score 0.85–0.95, NOT 0.65–0.75.
-  • If comments show strong gratitude and specific value mentions (concrete benefits, life change, specific results) but are less intense than above → score 0.80–0.88, NOT 0.65–0.75.
-  • Example (overwhelming praise): comments repeatedly calling the video “way more entertaining than TV/ESPN”, “gold standard production and storytelling”, “this is who I want my kid to watch”, with no major negative themes → 0.85–0.95.
-  • Example (strong but not extreme): many “this helped me”, “big W”, “worth every second” comments plus some neutral chatter but almost no negativity → 0.80–0.88.
-  • Ignore transcript; de-duplicate near-identical comments; down-weight spam/bots.
-
-- contentDepthScore (transcript ONLY). Weighted blend: Actionability (0.30), Specificity (0.20), Depth (0.20), Transferability (0.15), Novelty (0.10), Caveats (0.05).
-  ANCHORS: 0.00–0.20 = fluff/promo; 0.25–0.40 = surface tips; 0.45–0.60 = mixed; 0.61–0.75 = solid (baseline); 0.76–0.85 = excellent/epic; 0.86–0.92 = exceptional; 0.93–0.98 = masterpiece.
-  RULES:
-  • Steps + examples → depthScore MUST be ≥0.70 (do NOT score 0.60–0.65).
-  • Strong actionability + specificity (clear "how to", concrete numbers/examples) → depthScore MUST be ≥0.75 even if novelty/transferability are average.
-  • If the transcript combines: (1) a clear mental model or metaphor, (2) repeated concrete examples, and (3) clear behavioral guidance ("what to do next") → depthScore 0.80–0.90, NOT 0.70–0.78.
-  • If there are 3+ depth indicators (steps, numbers, frameworks, trade-offs, case studies, explicit caveats) → depthScore 0.80–0.92.
-  • If the transcript is mostly story, challenge, or entertainment with only light technique and few generalizable principles (e.g., training montage, high-production challenge) → depthScore should usually be 0.60–0.70, NOT 0.80+.
-  • If it is mostly hype/promo with little actionable content → depthScore ≤0.35 (do NOT give 0.50 for bad content).
-  • Example (contrast): high-production challenge video with some tips but no clear framework → depthScore around 0.65; a detailed breakdown of principles, progressions, and decision rules that viewers can apply → depthScore around 0.85.
-
-QUALITY CHECK
-1. Verdict aligns with thresholds (≥70% = Worth it, ≤45% = Skip, else Borderline)
-2. decisionReasons[0] has specific detail, hook-driven, max 18-22 words
-3. decisionLearnings are actionable with specifics, NO "You'll learn" prefix
-4. suggestedQuestions are specific, first is most compelling
-5. ⚠️ CRITICAL: suggestedQuestions MUST be in the EXACT SAME LANGUAGE as the transcript. Detect transcript language (Spanish, Portuguese, French, German, Italian, or ANY language). If transcript is Spanish → ALL 3 questions in Spanish. If Portuguese → ALL 3 in Portuguese. If French → ALL 3 in French. If English → ALL 3 in English. Verify this before returning.
-6. depthExplanation explains score with specific evidence
-7. ⚠️ CRITICAL: ALL text fields (decisionReasons, decisionLearnings, suggestedQuestions, decisionBestMoment, decisionSkip, signalQualityNote, depthExplanation, scoreReasonLine) MUST be in the SAME LANGUAGE as the transcript. Detect the transcript language and ensure ALL fields match. If transcript is Portuguese → ALL fields in Portuguese. If Spanish → ALL fields in Spanish. If French → ALL fields in French. If English → ALL fields in English. Do NOT default to English.
-8. BEFORE returning, re-read the transcript section and every text field you emitted. If any field is not in the same language as the transcript, rewrite it so it matches exactly.
-9. Floats [0,1] 2 decimals; limits respected
-10. SCORING: Valuable content (steps + examples) → depth ≥0.70; Epic content → depth 0.80–0.92; Positive comments → sentiment 0.75–0.90
-11. If the transcript is mostly entertainment/challenge with limited generalizable techniques, verify that depthScore is NOT above ~0.70; reduce it if needed so it matches the actual depth.
-12. If comments are overwhelmingly positive, grateful, and specific with no major negative themes, verify that sentimentScore is ≥0.80; increase it if you left it around 0.60–0.75 without strong negative evidence.
-13. If your own text describes comments as “overwhelmingly positive” or content as “deep, structured, and actionable”, but scores are still in the 0.60–0.75 band, reconsider and adjust the scores upward to match the evidence.
-
-
-===  Data  ===
+=== Data ===
 Transcript (max. 25000 chars):
 \(ctxForPrompt)
 
 Comments (first up to 25 lines):
 \(comments.prefix(25).joined(separator: "\\n"))
-
+comments_present: \(commentsPresent)
+comments_count: \(comments.count)
 
 Return only the JSON object. Stop immediately after the final "}".
 """
@@ -872,10 +804,11 @@ Return only the JSON object. Stop immediately after the final "}".
                 .joined(separator: "\n")
 
             prompt = """
-You are WorthIt Tutor — a clear, friendly guide. Answer based on the provided transcript and chat history.
+You are WorthIt Tutor - a clear, friendly guide. Answer based on the provided transcript and chat history.
 
 CRITICAL LANGUAGE RULE (OVERRIDES ALL OTHER INSTRUCTIONS):
 • Determine the answer language ONLY from the "User Question:" line shown below. That line is the single source of truth for language.
+• If any prior response or transcript is in a different language, ignore it and rewrite everything strictly in the question's language.
 • Ignore the transcript language, chat history language, device/app/system language, prior responses, or ANY other hint about language.
 • Respond entirely in that language. Do NOT print or mention the language (no lines like "Language = ..."). Do NOT mix languages.
 
@@ -924,10 +857,11 @@ Be warm, pragmatic, and actionable. Respond in the SAME LANGUAGE as the user's q
                 .joined(separator: "\n")
 
             prompt = """
-You are WorthIt Tutor — clear, practical, and helpful.
+You are WorthIt Tutor - clear, practical, and helpful.
 
 CRITICAL LANGUAGE RULE (OVERRIDES ALL OTHER INSTRUCTIONS):
 • Determine the answer language ONLY from the "User Question:" line shown below. That line is the single source of truth for language.
+• If any prior response or transcript is in a different language, ignore it and rewrite everything strictly in the question's language.
 • Ignore the transcript language, chat history language, device/app/system language, prior responses, or ANY other hint about language. They do NOT matter.
 • Respond entirely in that language. Do NOT print or mention the language (no lines like "Language = ..."). Do NOT mix languages.
 

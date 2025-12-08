@@ -134,6 +134,13 @@ struct RootView: View {
                             showDecisionCard = false
                         }
                     },
+                    onScoreBreakdown: {
+                        guard viewModel.scoreBreakdownDetails != nil else { return }
+                        viewModel.requestScoreBreakdownPresentation()
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                            showDecisionCard = false
+                        }
+                    },
                     onClose: {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                             showDecisionCard = false
@@ -497,7 +504,7 @@ struct RootView: View {
         // Allow drag-to-dismiss within the scroll content (does not interfere with text selection)
         .scrollDismissesKeyboard(.interactively)
         .environmentObject(viewModel)
-        // Removed sticky CTA/overlay inset — About appears at end of scroll
+        // Removed sticky CTA/overlay inset - About appears at end of scroll
     }
 
     // MARK: - Identity Box (Box 1)
@@ -518,16 +525,16 @@ struct RootView: View {
                 Image("AppLogo")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
-                    .padding(.leading, 4)
+                    .frame(width: 72, height: 72)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.24), radius: 10, y: 5)
+                    .padding(.leading, 0)
                 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("WorthIt")
                         .font(Theme.Font.title3.weight(.bold))
                         .foregroundStyle(Theme.Gradient.appLogoText())
-                    Text("AI‑powered insights, summaries, and Q&A for YouTube videos")
+                    Text("Watch less, learn more. Know if a video is worth your time before you press play.")
                         .font(Theme.Font.subheadline)
                         .foregroundColor(Theme.Color.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -562,7 +569,8 @@ struct RootView: View {
                 borderGradient: standardBorderGradient,
                 isRunningInExtension: isRunningInExtension,
                 pasteFieldFocus: $isPasteFieldFocused,
-                dismissKeyboard: dismissKeyboard
+                dismissKeyboard: dismissKeyboard,
+                onShareFromYouTube: { withAnimation { showShareExplanation = true } }
             )
         }
     }
@@ -666,18 +674,28 @@ struct RootView: View {
             if isPasteFieldFocused { dismissKeyboard() }
             viewModel.requestManualPaywallPresentation()
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 16, weight: .medium))
-                Text("Unlock Premium")
-                    .font(Theme.Font.subheadline.weight(.medium))
+                    .font(.system(size: 18, weight: .semibold))
+                VStack(spacing: 2) {
+                    Text("Go Premium")
+                        .font(Theme.Font.subheadline.weight(.semibold))
+                    Text("Unlock unlimited insights and Q&A")
+                        .font(Theme.Font.caption2)
+                        .foregroundColor(Color.white.opacity(0.88))
+                        .multilineTextAlignment(.center)
+                }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
             .foregroundColor(.white)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Theme.Gradient.appBluePurple.opacity(0.9))
+                    .fill(
+                        Theme.Gradient.appBluePurple
+                            .opacity(0.95)
+                    )
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .fill(Color.white.opacity(0.08))
@@ -685,13 +703,14 @@ struct RootView: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Theme.Gradient.appBluePurple.opacity(0.6), lineWidth: 0.9)
                             .blendMode(.overlay)
                     )
+                    .shadow(color: Theme.Color.accent.opacity(0.22), radius: 12, y: 6)
             )
         }
         .buttonStyle(.plain)
@@ -704,33 +723,60 @@ struct RootView: View {
 
         var body: some View {
             ZStack(alignment: .topTrailing) {
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
+                VStack(spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "crown.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.95))
+                        Text("Premium")
+                            .font(Theme.Font.caption.weight(.semibold))
+                            .foregroundColor(.white.opacity(0.9))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.12))
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(Color.white.opacity(0.18), lineWidth: 0.6)
+                                    )
+                            )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                    VStack(spacing: 4) {
                         Text("Unlock Premium")
                             .font(Theme.Font.subheadline.weight(.semibold))
                             .foregroundColor(.white)
-                        Text("Unlimited analyses")
+                        Text("Limitless deep-dive analyses and Q&A")
                             .font(Theme.Font.caption2)
-                            .foregroundColor(.white.opacity(0.85))
+                            .foregroundColor(.white.opacity(0.88))
+                            .multilineTextAlignment(.center)
                     }
-                    Spacer()
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .background(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Theme.Gradient.appBluePurple.opacity(0.85))
+                        .fill(Theme.Gradient.appBluePurple.opacity(0.9))
                         .background(
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
                                 .fill(Color.white.opacity(0.06))
-                                .blur(radius: 6)
+                                .blur(radius: 7)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.white.opacity(0.22), lineWidth: 0.9)
+                                .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(Theme.Gradient.appBluePurple.opacity(0.65), lineWidth: 1)
+                                .blendMode(.overlay)
                         )
                 )
-                .shadow(color: Theme.Color.accent.opacity(0.12), radius: 6, y: 3)
+                .shadow(color: Theme.Color.accent.opacity(0.18), radius: 10, y: 5)
                 .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .onTapGesture(perform: onSubscribe)
 
@@ -1195,162 +1241,6 @@ private struct AnalyzeReadyGlow: ViewModifier {
     }
 }
 
-struct ShareExplanationModal: View {
-    let onDismiss: () -> Void
-    let borderGradient: LinearGradient
-
-    var body: some View {
-        ZStack {
-            // Dimmed backdrop with subtle blur
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea()
-                .overlay(Color.black.opacity(0.35).ignoresSafeArea())
-                .onTapGesture { onDismiss() }
-
-            // Card
-            VStack(spacing: 0) {
-                // Header
-                HStack {
-                    Button(action: onDismiss) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("Back")
-                                .font(Theme.Font.subheadline.weight(.semibold))
-                        }
-                        .foregroundColor(Theme.Color.accent)
-                    }
-                    .accessibilityLabel("Dismiss Share Explanation")
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 24, weight: .semibold))
-                                .foregroundColor(Theme.Color.accent)
-                            Text("How to Share Videos")
-                                .font(Theme.Font.title3.weight(.bold))
-                                .foregroundStyle(Theme.Gradient.appLogoText())
-                        }
-                        Text("Get instant insights by sharing from YouTube")
-                            .font(Theme.Font.subheadline)
-                            .foregroundColor(Theme.Color.secondaryText.opacity(0.8))
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-
-                Divider().background(Theme.Color.accent.opacity(0.15)).padding(.horizontal, 10)
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        StepByStepGuide(steps: [
-                        StepData(icon: "play.rectangle.fill", title: "Open a YouTube Video", description: "Pick any video you want to analyze."),
-                        StepData(icon: "square.and.arrow.up", title: "Tap the Share Button", description: "Tap the Share arrow under the video. If YouTube shows its vertical overlay first, tap Share again to open the iOS Share Sheet, then tap More (…) if you still don't see WorthIt."),
-                        StepData(icon: "sparkles", title: "Choose WorthIt", description: "Select WorthIt from the Share Sheet to send the link into WorthIt.")
-                    ])
-
-                        AddToFavoritesSection()
-                    }
-                    .padding(12) // Standardized padding
-                }
-                .frame(maxHeight: UIScreen.main.bounds.height * 0.7)
-
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: 620)
-            .background(Theme.Color.sectionBackground.opacity(0.95))
-            .background(.ultraThinMaterial)
-            .cornerRadius(20)
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(borderGradient, lineWidth: 1.0)
-            )
-            .shadow(color: .black.opacity(0.35), radius: 16, y: 10)
-            .padding(24)
-            .transition(.opacity.combined(with: .scale(scale: 0.98)))
-        }
-        .preferredColorScheme(.dark)
-    }
-}
-
-struct StepData: Identifiable {
-    let id = UUID()
-    let icon: String
-    let title: String
-    let description: String
-}
-
-struct StepByStepGuide: View {
-    let steps: [StepData]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
-            Text("How to Use")
-                .font(Theme.Font.headline.weight(.semibold))
-                .foregroundColor(Theme.Color.primaryText)
-                .padding(.bottom, 5)
-            ForEach(steps) { step in
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: step.icon)
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundColor(Theme.Color.accent)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(step.title)
-                            .font(Theme.Font.subheadline.weight(.semibold))
-                            .foregroundColor(Theme.Color.primaryText)
-                        Text(step.description)
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.Color.secondaryText)
-                            .lineLimit(2)
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct AddToFavoritesSection: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("If you don't see WorthIt")
-                .font(Theme.Font.headline.weight(.semibold))
-                .foregroundColor(Theme.Color.primaryText)
-                .padding(.top, 10)
-            Text("Add it to your Share Sheet once — then it will always appear.")
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.Color.secondaryText)
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundColor(Color.yellow)
-                    .frame(width: 30)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Here’s how:")
-                        .font(Theme.Font.subheadline.weight(.bold))
-                        .foregroundColor(Theme.Color.primaryText)
-                    Text("1. Swipe up on the Share Sheet and tap More (…) at the end of the horizontal row.")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
-                    Text("2. Tap \"Edit Actions…\", then tap the green + next to WorthIt to move it into Favorites and tap Done.")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
-                    Text("3. Optional: drag WorthIt to the top of Favorites so it always appears first.")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText)
-                }
-            }
-        }
-    }
-}
-
 struct OnboardingCallbacks {
     let onSkip: () -> Void
     let onFocusPaste: () -> Void
@@ -1384,36 +1274,36 @@ struct OnboardingView: View {
                 id: 0,
                 eyebrow: "Watch less, learn more",
                 title: "Welcome to WorthIt",
-                detail: "Skip the fluff—WorthIt surfaces the signal fast.",
+                detail: "See in seconds if a YouTube video is worth your time.",
                 caption: nil,
                 cards: [
-                    OnboardingCard(icon: "bolt.fill", title: "Instant TL;DR", description: "Full summary in seconds.", action: .none),
-                    OnboardingCard(icon: "sparkles", title: "Jump to the gems", description: "Highlights take you to key moments.", action: .none),
-                    OnboardingCard(icon: "questionmark.circle", title: "Ask sharper questions", description: "Chat with the transcript and get instant answers.", action: .none)
+                    OnboardingCard(icon: "bolt.fill", title: "Instant TL;DR", description: "Get the full summary in seconds.", action: .none),
+                    OnboardingCard(icon: "sparkles", title: "Jump to the gems", description: "Skip ahead to the moments that matter most.", action: .none),
+                    OnboardingCard(icon: "questionmark.circle", title: "Ask anything about the video", description: "Get direct answers without watching it all.", action: .none)
                 ]
             ),
             OnboardingSlide(
                 id: 1,
-                eyebrow: "Score · Atomic insights · Sentiment",
+                eyebrow: "Score · Key ideas · Sentiment",
                 title: "Value first, video later",
-                detail: "Score, atomic insights, and sentiment show what to watch.",
+                detail: "See how how deep and helpful a video really is.",
                 caption: nil,
                 cards: [
-                    OnboardingCard(icon: "gauge.medium", title: "WorthIt score decoded", description: "Instant 0–100 depth read.", action: .none),
-                    OnboardingCard(icon: "list.bullet.rectangle", title: "Atomic insights on autopilot", description: "Storyline, highlights, and chapters for you.", action: .none),
-                    OnboardingCard(icon: "bubble.left.and.bubble.right.fill", title: "Community vibe check", description: "Comment sentiment in one glance.", action: .none)
+                    OnboardingCard(icon: "gauge.medium", title: "0–100 WorthIt score", description: "See how deep and actionable a video is in one number.", action: .none),
+                    OnboardingCard(icon: "list.bullet.rectangle", title: "Key ideas", description: "Gems of wisdom, highlights, and takaways.", action: .none),
+                    OnboardingCard(icon: "bubble.left.and.bubble.right.fill", title: "Community sentiment", description: "See whether the comments think it’s worth it.", action: .none)
                 ]
             ),
             OnboardingSlide(
                 id: 2,
                 eyebrow: "Start in seconds",
-                title: "Start now",
-                detail: "Fire up a demo, paste a link, or share from YouTube.",
+                title: "Try WorthIt right now",
+                detail: "Test it on a demo, paste a link, or share from YouTube.",
                 caption: nil,
                 cards: [
-                    OnboardingCard(icon: "play.rectangle.on.rectangle.fill", title: "Watch the instant demo", description: "See a real video compressed into the WorthIt experience.", action: .demoPlayback),
-                    OnboardingCard(icon: "link.circle.fill", title: "Paste a YouTube link", description: "Drop any URL and WorthIt handles the rest.", action: .focusPaste),
-                    OnboardingCard(icon: "square.and.arrow.up", title: "Share from the YouTube app", description: "Tap the Share arrow, then More (…) if you need to reveal WorthIt and pin it in Favorites.", action: .shareSetup)
+                    OnboardingCard(icon: "play.rectangle.on.rectangle.fill", title: "Watch an instant demo", description: "See a real video compressed into the WorthIt experience.", action: .demoPlayback),
+                    OnboardingCard(icon: "link.circle.fill", title: "Paste a YouTube link", description: "Drop a URL and WorthIt handles the rest.", action: .focusPaste),
+                    OnboardingCard(icon: "square.and.arrow.up", title: "Use WorthIt on YouTube", description: "Learn how to share videos to WorthIt.", action: .shareSetup)
                 ]
             )
         ]

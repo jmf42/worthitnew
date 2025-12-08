@@ -480,7 +480,7 @@ struct ScoreBreakdownCardView: View {
                                 HStack {
                                     Image(systemName: "text.bubble.fill")
                                         .foregroundColor(Theme.Color.secondaryText)
-                                    Text("No comments yet — score leans on content depth.")
+                                    Text("No comments yet - score leans on content depth.")
                                         .font(Theme.Font.subheadline)
                                         .foregroundColor(Theme.Color.secondaryText)
                                 }
@@ -495,22 +495,19 @@ struct ScoreBreakdownCardView: View {
 
                         // Clear conclusion phrased as a verdict
                         let worthItMessage: String = {
-                            if breakdown.finalScore >= 80 {
-                                return "Conclusion: Highly worth your time"
-                            } else if breakdown.finalScore >= 60 {
-                                return "Conclusion: Worth your time"
-                            } else if breakdown.finalScore >= 40 {
-                                return "Conclusion: Borderline — depends on your interest"
+                            if breakdown.finalScore >= 70 {
+                                return "Worth your time"
+                            } else if breakdown.finalScore <= 45 {
+                                return "Skip - Not worth your time"
                             } else {
-                                return "Conclusion: Not worth your time"
+                                return "Borderline - Depends on your interest"
                             }
                         }()
                         HStack(spacing: 8) {
                             let iconName: String = {
-                                if breakdown.finalScore >= 80 { return "checkmark.seal.fill" }
-                                if breakdown.finalScore >= 60 { return "hand.thumbsup.fill" }
-                                if breakdown.finalScore >= 40 { return "exclamationmark.triangle.fill" }
-                                return "xmark.octagon.fill"
+                                if breakdown.finalScore >= 70 { return "hand.thumbsup.fill" }
+                                if breakdown.finalScore <= 45 { return "xmark.octagon.fill" }
+                                return "exclamationmark.triangle.fill"
                             }()
                             Image(systemName: iconName)
                                 .foregroundStyle(Theme.Color.secondaryText)
@@ -681,7 +678,7 @@ struct ViewerSentimentSection: View {
 
             if let summary = summaryText {
                 Text(summary)
-                    .font(Theme.Font.footnote)
+                    .font(Theme.Font.caption)
                     .foregroundColor(Theme.Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 12)
@@ -700,14 +697,9 @@ struct ViewerSentimentSection: View {
                 }
                 .padding(.top, summaryText == nil ? 0 : 4)
             }
-
-            if !breakdown.viewerTips.isEmpty {
-                ThemePillsView(title: "Viewer tips", themes: Array(breakdown.viewerTips.prefix(2)), color: Theme.Color.accent, icon: "lightbulb")
-                    .padding(.top, 4)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 4)
+        .padding(.top, 6)
     }
 }
 
@@ -1114,7 +1106,7 @@ struct AboutView: View {
                         Text("Version")
                             .font(Theme.Font.headline.weight(.semibold))
                             .foregroundColor(Theme.Color.primaryText)
-                        Text("WorthIt v1.01")
+                        Text("WorthIt v1.2.3")
                             .font(Theme.Font.body)
                             .foregroundColor(Theme.Color.secondaryText)
                     }

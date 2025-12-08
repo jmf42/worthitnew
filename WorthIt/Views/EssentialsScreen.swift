@@ -639,33 +639,18 @@ struct CommunityNarrativeView: View {
         SectionView(title: "What Viewers Are Saying", icon: "quote.bubble.fill") {
             VStack(alignment: .leading, spacing: 20) {
                 if let CommentssentimentSummary = analysis.CommentssentimentSummary, !CommentssentimentSummary.isEmpty {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "quote.bubble")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(Theme.Color.accent)
-                            .offset(y: 3) // Adjust vertically to align with text
-                            .accessibilityHidden(true)
-                        Text(CommentssentimentSummary)
-                            .font(Theme.Font.body)
-                            .foregroundColor(Theme.Color.primaryText)
-                            .copyContext(CommentssentimentSummary)
-                    }
+                    Text(CommentssentimentSummary)
+                        .font(Theme.Font.body)
+                        .foregroundColor(Theme.Color.primaryText)
+                        .lineSpacing(5)
+                        .copyContext(CommentssentimentSummary)
+                        .padding(.bottom, 6)
                 }
 
                 // Scope / trust context
-                HStack(spacing: 10) {
-                    Text("From top comments")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule().fill(Theme.Color.sectionBackground.opacity(0.7))
-                        )
-                    if let spamRatio = analysis.spamRatio {
-                        CommunityHealthRow(spamRatio: spamRatio)
-                    }
-                    Spacer(minLength: 0)
+                if let spamRatio = analysis.spamRatio {
+                    CommunityHealthRow(spamRatio: spamRatio)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 let tips = (analysis.viewerTips ?? []).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -682,8 +667,9 @@ struct CommunityNarrativeView: View {
                     Text("Themes from comments")
                         .font(Theme.Font.subheadlineBold)
                         .foregroundColor(Theme.Color.secondaryText)
+                        .padding(.top, 12)
                     let renderedThemes = showAllThemes ? themes : Array(themes.prefix(3))
-                    VStack(spacing: 10) {
+                    VStack(spacing: 16) {
                         ForEach(renderedThemes, id: \.theme) { theme in
                             CommentThemeRow(theme: theme, showStance: hasMultipleStances)
                         }
@@ -720,25 +706,29 @@ struct CommunityNarrativeView: View {
         private var display: (text: String, color: Color, icon: String) {
             if spamRatio <= 0.1 { return ("Low spam", Theme.Color.success, "checkmark.shield.fill") }
             if spamRatio <= 0.25 { return ("Some spam present", Theme.Color.warning, "exclamationmark.triangle.fill") }
-            return ("Spam-heavy — caution", Theme.Color.error, "xmark.shield.fill")
+            return ("Spam-heavy - caution", Theme.Color.error, "xmark.shield.fill")
         }
 
         var body: some View {
             HStack(spacing: 8) {
                 Image(systemName: display.icon)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(display.color)
+                    .foregroundColor(display.color.opacity(0.9))
                 Text(display.text)
                     .font(Theme.Font.captionBold)
-                    .foregroundColor(display.color)
-                Spacer()
+                    .foregroundColor(display.color.opacity(0.9))
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 14)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(display.color.opacity(0.12))
+                    .fill(display.color.opacity(0.1))
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(display.color.opacity(0.16), lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -761,11 +751,11 @@ struct CommunityNarrativeView: View {
         }
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(title)
                     .font(Theme.Font.subheadlineBold)
                     .foregroundColor(Theme.Color.secondaryText)
-                LazyVStack(alignment: .leading, spacing: 6) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(items, id: \.self) { item in
                         HStack(spacing: 6) {
                             Image(systemName: icon)
@@ -776,12 +766,12 @@ struct CommunityNarrativeView: View {
                                 .foregroundColor(Theme.Color.primaryText)
                         }
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
+                        .padding(.vertical, 6)
                         .background(
-                            Capsule().fill(tint.opacity(0.12))
+                            Capsule().fill(tint.opacity(0.08))
                         )
                         .overlay(
-                            Capsule().stroke(tint.opacity(0.18), lineWidth: 1)
+                            Capsule().stroke(tint.opacity(0.14), lineWidth: 1)
                         )
                         .copyContext(item)
                     }
@@ -820,7 +810,7 @@ private struct CommentThemeRow: View {
             Image(systemName: sentimentInfo.0)
                 .foregroundColor(sentimentInfo.1)
                 .frame(width: 22)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(theme.theme.replacingOccurrences(of: "_", with: " ").capitalized)
                     .font(Theme.Font.body.weight(.semibold))
                     .foregroundColor(Theme.Color.primaryText)
@@ -829,13 +819,13 @@ private struct CommentThemeRow: View {
                         Text(stanceTag.0)
                             .font(Theme.Font.captionBold)
                             .foregroundColor(stanceTag.1)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .background(
-                                Capsule().fill(stanceTag.1.opacity(0.14))
+                                Capsule().fill(stanceTag.1.opacity(0.1))
                             )
                             .overlay(
-                                Capsule().stroke(stanceTag.1.opacity(0.2), lineWidth: 1)
+                                Capsule().stroke(stanceTag.1.opacity(0.16), lineWidth: 1)
                             )
                     }
                 }
@@ -843,7 +833,11 @@ private struct CommentThemeRow: View {
                     Text(example)
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.Color.secondaryText)
-                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(1)
                         .onTapGesture {
                             UIPasteboard.general.string = example
                             UINotificationFeedbackGenerator().notificationOccurred(.success)

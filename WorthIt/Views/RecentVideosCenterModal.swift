@@ -54,13 +54,6 @@ struct RecentVideosCenterModal: View {
         return Int(avg.rounded())
     }
 
-    private var lastUpdatedRelative: String? {
-        guard let latest = items.map({ $0.modifiedAt }).max() else { return nil }
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f.localizedString(for: latest, relativeTo: Date())
-    }
-
     private func loadItems() {
         if let seededItems = initialItems {
             Task { @MainActor in updateItems(seededItems) }
@@ -194,11 +187,6 @@ struct RecentVideosCenterModal: View {
                 Text("\(items.count) videos analyzed")
                     .font(Theme.Font.subheadline.weight(.semibold))
                     .foregroundColor(Theme.Color.primaryText)
-                if let updated = lastUpdatedRelative {
-                    Text("Updated \(updated)")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
-                }
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -214,12 +202,6 @@ struct RecentVideosCenterModal: View {
                 Text("\(averageScore.map { "\($0)%" } ?? "–")")
                     .font(Theme.Font.title2.weight(.bold))
                     .foregroundColor(.white)
-                if let avg = averageScore {
-                    let tier = avg >= 80 ? "Top 25%" : (avg >= 60 ? "Top 75%" : "Below avg")
-                    Text(tier)
-                        .font(Theme.Font.caption.weight(.semibold))
-                        .foregroundColor(Theme.Color.secondaryText)
-                }
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -44,6 +44,10 @@ struct AskAnythingScreen: View {
                 suggestedQuestionsView
             }
 
+            if viewModel.hasHitQALimit, let snapshot = viewModel.lastQALimitSnapshot {
+                qaLimitBanner(snapshot: snapshot)
+            }
+
             inputFieldView
         }
         .enableSwipeBack()
@@ -110,6 +114,55 @@ struct AskAnythingScreen: View {
         }
         .frame(height: 50)
         .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    @ViewBuilder
+    private func qaLimitBanner(snapshot: QAUsageTracker.Snapshot) -> some View {
+        let dailyMessage = "You’ve hit today’s free Q&A limit (\(snapshot.limitPerDay)/day)."
+        let perVideoMessage = "You’ve asked \(snapshot.countForVideo)/\(snapshot.limitPerVideo) on this video."
+        let message = snapshot.remainingToday == 0 ? dailyMessage : perVideoMessage
+
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "lock.fill")
+                    .foregroundColor(Theme.Color.accent)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message)
+                        .font(Theme.Font.captionBold)
+                        .foregroundColor(Theme.Color.primaryText)
+                    Text("Upgrade to Premium for unlimited Q&A on any video.")
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.Color.secondaryText)
+                }
+                Spacer()
+            }
+
+            Button {
+                viewModel.requestQAPaywallPresentation()
+            } label: {
+                Text("Unlock Unlimited Q&A")
+                    .font(Theme.Font.captionBold)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Theme.Gradient.appBluePurple)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.Color.sectionBackground.opacity(0.45))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                )
+        )
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 
     private var inputFieldView: some View {
@@ -205,7 +258,6 @@ struct AskAnythingScreen: View {
             showSuggestions = false
         }
         isTextFieldFocused = false
-        viewModel.qaInputText = ""
         textFieldHeight = 24 // Reset to new base height
     }
 

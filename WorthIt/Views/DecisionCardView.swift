@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Decision Card
 struct DecisionCardView: View {
     let model: DecisionCardModel
     let onPrimaryAction: () -> Void
     let onSecondaryAction: () -> Void
+    let onScoreBreakdown: () -> Void
     let onClose: () -> Void
     let onBestMoment: (() -> Void)?
 
@@ -31,8 +33,9 @@ struct DecisionCardView: View {
         VStack(spacing: 0) {
             // 1. Hero Section: Verdict Badge, Score & Reason (compact)
             heroSection
-                .padding(.horizontal, 20) // Wider text area
+                .padding(.horizontal, 22) // Slightly wider text area
                 .padding(.top, 24) // Increased spacing from top border
+                .padding(.bottom, 6)
             
             // 3. Insights: Compact Learnings
             if !model.learnings.isEmpty {
@@ -186,7 +189,7 @@ struct DecisionCardView: View {
     
     // MARK: - 2. Hero Section (Compact)
     private var heroSection: some View {
-        VStack(spacing: 0) { // Tighter control
+        VStack(alignment: .leading, spacing: 16) { // Balanced breathing room
             // Verdict Badge - Centered, proper spacing
             HStack(spacing: 6) {
                 Text("VERDICT:")
@@ -215,50 +218,92 @@ struct DecisionCardView: View {
             .shadow(color: verdictColor.opacity(0.15), radius: 4, x: 0, y: 2)
             .frame(maxWidth: .infinity) // Center the badge horizontally
             .padding(.top, 0) // No extra padding (hero section handles it)
-            .padding(.bottom, 16) // Uniform spacing: verdict-to-gauge = 16pt
-            
-            // Centered Score Gauge (smaller)
-            ZStack {
-                // Subtle glow behind gauge
-                Circle()
-                    .fill(verdictColor)
-                    .frame(width: 46, height: 46)
-                    .blur(radius: 28)
-                    .opacity(0.22)
-                
-                ScoreGaugeView(
-                    score: model.score ?? 0,
-                    isLoading: false,
-                    showBreakdown: .constant(false),
-                    isAnimationCompleted: $gaugeAnimationCompleted
-                )
-                .frame(width: 72, height: 72) // Slightly smaller (was 80)
-                .accessibilityHint("Worth-It score display")
+            .padding(.bottom, 10) // Uniform spacing: verdict-to-content
+
+            HStack(alignment: .center, spacing: 16) {
+                gaugeSection
+                    .frame(width: 98)
+
+                reasonBox
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, 16) // Spacing to hero text
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            // Hero Reason - Stable, properly aligned formatting (placed below gauge + why)
+            Text(model.reason)
+                .font(Theme.Font.title3.weight(.bold))
+                .foregroundColor(.white.opacity(0.95))
+                .multilineTextAlignment(.leading)
+                .lineSpacing(5)
+                .kerning(0.1)
+                .lineLimit(nil)
+                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1.5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var reasonBox: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Why")
+                .font(Theme.Font.captionBold)
+                .foregroundColor(Theme.Color.secondaryText.opacity(0.9))
+                .textCase(.uppercase)
+                .tracking(0.8)
 
             if let scoreReasonLine = model.scoreReasonLine, !scoreReasonLine.isEmpty {
                 Text(scoreReasonLine)
                     .font(Theme.Font.subheadline)
                     .foregroundColor(Theme.Color.secondaryText.opacity(0.95))
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, 10)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
+        )
+    }
 
-            // Hero Reason - Stable, properly aligned formatting
-            Text(model.reason)
-                .font(Theme.Font.title3.weight(.bold))
-                .foregroundColor(.white.opacity(0.95))
-                .multilineTextAlignment(.leading) // Left-aligned for consistent line starts
-                .lineSpacing(5) // Consistent line spacing
-                .kerning(0.1) // Fixed letter spacing - no shifting
-                .lineLimit(6) // Allow more lines instead of scaling
-                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1.5)
-                .frame(maxWidth: .infinity, alignment: .leading) // Ensure left alignment
-                .fixedSize(horizontal: false, vertical: true)
+    private var gaugeSection: some View {
+        ZStack {
+            // Subtle glow behind gauge
+            Circle()
+                .fill(verdictColor)
+                .frame(width: 46, height: 46)
+                .blur(radius: 28)
+                .opacity(0.22)
+            
+            ScoreGaugeView(
+                score: model.score ?? 0,
+                isLoading: false,
+                showBreakdown: .constant(false),
+                isAnimationCompleted: $gaugeAnimationCompleted
+            )
+                .frame(width: 76, height: 76)
+            .accessibilityHint("Worth-It score display")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            triggerScoreBreakdown()
+        }
+        .overlay(alignment: .topTrailing) {
+            Button(action: triggerScoreBreakdown) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(Theme.Color.secondaryText.opacity(0.85))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Circle())
+            }
+            .accessibilityLabel("Show score breakdown")
+            .accessibilityHint("Opens detailed score metrics")
+            .offset(x: 18, y: -18)
         }
     }
 
@@ -321,6 +366,11 @@ struct DecisionCardView: View {
 
     private func capitalizeFirst(_ str: String) -> String {
         return str.prefix(1).capitalized + str.dropFirst()
+    }
+
+    private func triggerScoreBreakdown() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onScoreBreakdown()
     }
 
     // MARK: - Helpers
